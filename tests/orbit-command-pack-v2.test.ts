@@ -40,6 +40,48 @@ function adapterFactory(options?: { remoteValidateOk?: boolean; pushOk?: boolean
   };
 }
 
+function rateLimitedAdapterFactory(options: {
+  failCountBeforeSuccess?: number;
+  alwaysRateLimited?: boolean;
+}): FlutterFlowAdapter {
+  let pushCalls = 0;
+  const failCountBeforeSuccess = options.failCountBeforeSuccess ?? 1;
+  return {
+    async listProjects() {
+      return [];
+    },
+    async listFileKeys() {
+      return [];
+    },
+    async fetchFile() {
+      return "";
+    },
+    async pushFiles() {
+      pushCalls += 1;
+      if (options.alwaysRateLimited || pushCalls <= failCountBeforeSuccess) {
+        return {
+          ok: false,
+          message:
+            "FlutterFlow API request failed (429) | POST https://api.flutterflow.io/v2/updateProjectByYaml | rate_limit: retry later (retry-after=1s)"
+        };
+      }
+      return { ok: true };
+    },
+    async remoteValidate() {
+      return { ok: true };
+    },
+    async listPartitionedFileNames() {
+      return { files: [] };
+    },
+    async fetchProjectYamls() {
+      return { files: {} };
+    },
+    async validateProjectYaml() {
+      return { ok: true };
+    }
+  };
+}
+
 async function buildOrbit(adapter: FlutterFlowAdapter) {
   const db = openOrbitDb({ dbPath: ":memory:" });
   const snapshotRepo = new SnapshotRepo(db);
@@ -413,6 +455,76 @@ describe("next command pack", () => {
     expect(safe3Data.applied).toBe(false);
     expect(safe3Data.manualPayload).toBeDefined();
     failed.db.close();
+  });
+
+  it("retries changeset.applySafe on rate limits and succeeds", async () => {
+    const rateLimited = await buildOrbit(rateLimitedAdapterFactory({ failCountBeforeSuccess: 1 }));
+    const snapshot = rateLimited.snapshotRepo.createSnapshot("proj_1", "safe-rate-limit-retry");
+    seedSplitPages(rateLimited.snapshotRepo, snapshot.snapshotId);
+    await rateLimited.reindex(snapshot.snapshotId);
+
+    const staged = await rateLimited.orbit.run({
+      cmd: "widget.set",
+      snapshot: snapshot.snapshotId,
+      args: { nameOrId: "login", nodeId: "id-Text_a", text: "RateRetry", preview: true, apply: false }
+    });
+    expect(staged.ok).toBe(true);
+
+    const safe = await rateLimited.orbit.run({
+      cmd: "changeset.applySafe",
+      snapshot: snapshot.snapshotId,
+      args: {
+        changesetId: (staged.data as { changesetId: string }).changesetId,
+        confirm: true,
+        remoteValidate: false,
+        rateLimitRetries: 1,
+        rateLimitBaseMs: 250,
+        rateLimitMaxWaitMs: 1000
+      }
+    });
+
+    expect(safe.ok).toBe(true);
+    const data = safe.data as {
+      applied: boolean;
+      rateLimited?: boolean;
+      attempts: Array<{ phase?: string; waitMs?: number; applied: boolean }>;
+    };
+    expect(data.applied).toBe(true);
+    expect(data.rateLimited).toBe(false);
+    expect(data.attempts.some((attempt) => attempt.phase === "rate-limit-retry")).toBe(true);
+    rateLimited.db.close();
+  });
+
+  it("returns retry guidance when changeset.applySafe remains rate-limited", async () => {
+    const rateLimited = await buildOrbit(rateLimitedAdapterFactory({ alwaysRateLimited: true }));
+    const snapshot = rateLimited.snapshotRepo.createSnapshot("proj_1", "safe-rate-limit-fail");
+    seedSplitPages(rateLimited.snapshotRepo, snapshot.snapshotId);
+    await rateLimited.reindex(snapshot.snapshotId);
+
+    const staged = await rateLimited.orbit.run({
+      cmd: "widget.set",
+      snapshot: snapshot.snapshotId,
+      args: { nameOrId: "login", nodeId: "id-Text_a", text: "RateFail", preview: true, apply: false }
+    });
+    expect(staged.ok).toBe(true);
+
+    const safe = await rateLimited.orbit.run({
+      cmd: "changeset.applySafe",
+      snapshot: snapshot.snapshotId,
+      args: {
+        changesetId: (staged.data as { changesetId: string }).changesetId,
+        confirm: true,
+        remoteValidate: false,
+        rateLimitRetries: 0
+      }
+    });
+
+    expect(safe.ok).toBe(true);
+    const data = safe.data as { applied: boolean; rateLimited?: boolean; nextRetryAt?: string };
+    expect(data.applied).toBe(false);
+    expect(data.rateLimited).toBe(true);
+    expect(typeof data.nextRetryAt).toBe("string");
+    rateLimited.db.close();
   });
 
   it("extends intent.run deterministic mappings for new commands", async () => {

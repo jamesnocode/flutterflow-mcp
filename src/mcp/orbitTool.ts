@@ -22,6 +22,7 @@ import type {
   ClipboardEntry,
   IntentRunResult,
   PageRecipeId,
+  ProjectVersionInfo,
   RollbackResult,
   RouteUpsertArgs,
   SnapshotEnsureFreshResult,
@@ -114,6 +115,16 @@ function boolArg(args: Record<string, unknown>, key: string, defaultValue = fals
     }
   }
   return defaultValue;
+}
+
+type FetchStrategy = "auto" | "bulk" | "file";
+
+function parseFetchStrategy(args: Record<string, unknown>): FetchStrategy {
+  const raw = strArg(args, "fetchStrategy", false).toLowerCase();
+  if (raw === "bulk" || raw === "file") {
+    return raw;
+  }
+  return "auto";
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -1753,6 +1764,7 @@ export class OrbitCommandPalette {
                   args: {
                     snapshotId: "optional explicit snapshot (or input.snapshot)",
                     mode: "optional incremental|full, default incremental",
+                    fetchStrategy: "optional auto|bulk|file, default auto",
                     maxFetch: "optional max file fetches per run (1..2000)",
                     concurrency: "optional fetch concurrency (1..16, default 1; slow-safe)",
                     sleepMs: "optional delay between file fetches in each worker, default 250ms",
@@ -1769,6 +1781,7 @@ export class OrbitCommandPalette {
                     snapshotId: "optional explicit snapshot (or input.snapshot)",
                     passes: "optional number of incremental passes (1..20, default 3)",
                     pauseMs: "optional delay between passes, default 10000",
+                    fetchStrategy: "optional auto|bulk|file, default auto",
                     maxFetch: "optional max file fetches per pass (1..2000, default 25)",
                     concurrency: "optional fetch concurrency (1..16, default 1)",
                     sleepMs: "optional delay between file fetches in each worker, default 250",
@@ -1786,6 +1799,9 @@ export class OrbitCommandPalette {
                     confirm: "required true",
                     remoteValidate: "optional boolean, default true",
                     retryWithoutRemoteValidate: "optional boolean, default true",
+                    rateLimitRetries: "optional retries on apply 429 failures (0..6, default 3)",
+                    rateLimitBaseMs: "optional base backoff for apply 429 retries, default 1500",
+                    rateLimitMaxWaitMs: "optional total wait budget for apply retries, default 90000",
                     exportOnFailure: "optional boolean, default true"
                   },
                   examples: [{ cmd: "changeset.applySafe", args: { changesetId: "chg_x", confirm: true } }]
@@ -2034,6 +2050,7 @@ export class OrbitCommandPalette {
           const snapshotId = this.requireSnapshotId(parsed, args);
           const modeRaw = strArg(args, "mode", false) || "incremental";
           const mode = modeRaw === "full" ? "full" : "incremental";
+          const fetchStrategy = parseFetchStrategy(args);
           const maxFetchRaw = numArg(args, "maxFetch", 0);
           const concurrencyRaw = numArg(args, "concurrency", 1);
           const sleepMsRaw = numArg(args, "sleepMs", 250);
@@ -2041,6 +2058,7 @@ export class OrbitCommandPalette {
           const listRetryBaseMsRaw = numArg(args, "listRetryBaseMs", 1500);
           const result = await this.refreshSnapshotOnce(snapshotId, {
             mode,
+            fetchStrategy,
             maxFetch: maxFetchRaw > 0 ? clampInt(maxFetchRaw, 1, 2000) : undefined,
             concurrency: clampInt(concurrencyRaw, 1, 16),
             sleepMs: clampInt(sleepMsRaw, 0, 60_000),
@@ -2056,6 +2074,11 @@ export class OrbitCommandPalette {
               fetchedCount: result.fetchedCount,
               attemptedFetchCount: result.attemptedFetchCount,
               totalRemoteFiles: result.totalRemoteFiles,
+              strategyUsed: result.strategyUsed,
+              failedFetchCount: result.failedFetchCount,
+              partial: result.partial,
+              pruneApplied: result.pruneApplied,
+              authoritative: result.authoritative,
               versionInfo: result.versionInfo,
               notes: result.notes
             },
@@ -2067,6 +2090,7 @@ export class OrbitCommandPalette {
           const snapshotId = this.requireSnapshotId(parsed, args);
           const passes = clampInt(numArg(args, "passes", 3), 1, 20);
           const pauseMs = clampInt(numArg(args, "pauseMs", 10_000), 0, 300_000);
+          const fetchStrategy = parseFetchStrategy(args);
           const maxFetchRaw = numArg(args, "maxFetch", 25);
           const concurrencyRaw = numArg(args, "concurrency", 1);
           const sleepMsRaw = numArg(args, "sleepMs", 250);
@@ -2079,6 +2103,11 @@ export class OrbitCommandPalette {
             fetchedCount: number;
             attemptedFetchCount: number;
             totalRemoteFiles: number;
+            strategyUsed: "bulk" | "file";
+            failedFetchCount: number;
+            partial: boolean;
+            pruneApplied: boolean;
+            authoritative: boolean;
             warningsCount: number;
             notes: string[];
           }> = [];
@@ -2086,11 +2115,14 @@ export class OrbitCommandPalette {
           let totalFetchedCount = 0;
           let totalAttemptedFetchCount = 0;
           let totalRemoteFiles = 0;
+          let totalFailedFetchCount = 0;
           let lastVersionInfo: unknown;
+          let authoritative = true;
 
           for (let pass = 1; pass <= passes; pass += 1) {
             const refreshed = await this.refreshSnapshotOnce(snapshotId, {
               mode: "incremental",
+              fetchStrategy,
               maxFetch: maxFetchRaw > 0 ? clampInt(maxFetchRaw, 1, 2000) : undefined,
               concurrency: clampInt(concurrencyRaw, 1, 16),
               sleepMs: clampInt(sleepMsRaw, 0, 60_000),
@@ -2101,7 +2133,9 @@ export class OrbitCommandPalette {
             totalFetchedCount += refreshed.fetchedCount;
             totalAttemptedFetchCount += refreshed.attemptedFetchCount;
             totalRemoteFiles = refreshed.totalRemoteFiles;
+            totalFailedFetchCount += refreshed.failedFetchCount;
             lastVersionInfo = refreshed.versionInfo;
+            authoritative = authoritative && refreshed.authoritative;
             warnings.push(...refreshed.warnings);
             passResults.push({
               pass,
@@ -2109,6 +2143,11 @@ export class OrbitCommandPalette {
               fetchedCount: refreshed.fetchedCount,
               attemptedFetchCount: refreshed.attemptedFetchCount,
               totalRemoteFiles: refreshed.totalRemoteFiles,
+              strategyUsed: refreshed.strategyUsed,
+              failedFetchCount: refreshed.failedFetchCount,
+              partial: refreshed.partial,
+              pruneApplied: refreshed.pruneApplied,
+              authoritative: refreshed.authoritative,
               warningsCount: refreshed.warnings.length,
               notes: refreshed.notes
             });
@@ -2138,6 +2177,8 @@ export class OrbitCommandPalette {
               totalFetchedCount,
               totalAttemptedFetchCount,
               totalRemoteFiles,
+              totalFailedFetchCount,
+              authoritative,
               versionInfo: lastVersionInfo,
               passResults
             },
@@ -8188,6 +8229,9 @@ export class OrbitCommandPalette {
           }
           const remoteValidate = boolArg(args, "remoteValidate", true);
           const retryWithoutRemoteValidate = boolArg(args, "retryWithoutRemoteValidate", true);
+          const rateLimitRetries = clampInt(numArg(args, "rateLimitRetries", 3), 0, 6);
+          const rateLimitBaseMs = clampInt(numArg(args, "rateLimitBaseMs", 1500), 250, 60_000);
+          const rateLimitMaxWaitMs = clampInt(numArg(args, "rateLimitMaxWaitMs", 90_000), 1_000, 300_000);
           const exportOnFailure = boolArg(args, "exportOnFailure", true);
 
           const preview = this.changesets.preview(changesetId);
@@ -8207,6 +8251,7 @@ export class OrbitCommandPalette {
           const attempts: ApplySafeResult["attempts"] = [];
           const firstAttempt = await this.changesets.apply(changesetId, confirm, { remoteValidate });
           attempts.push({
+            phase: "initial",
             remoteValidate,
             applied: firstAttempt.applied,
             reason: firstAttempt.reason
@@ -8216,6 +8261,7 @@ export class OrbitCommandPalette {
               applied: true,
               phase: "apply",
               attempts,
+              rateLimited: false,
               preview,
               validation,
               applyResult: firstAttempt
@@ -8223,9 +8269,11 @@ export class OrbitCommandPalette {
             return this.ok(parsed.cmd, out);
           }
 
+          let latestAttempt = firstAttempt;
           if (retryWithoutRemoteValidate && remoteValidate && firstAttempt.reason?.toLowerCase().includes("remote validation failed")) {
             const secondAttempt = await this.changesets.apply(changesetId, confirm, { remoteValidate: false });
             attempts.push({
+              phase: "remote-validate-retry",
               remoteValidate: false,
               applied: secondAttempt.applied,
               reason: secondAttempt.reason
@@ -8235,35 +8283,66 @@ export class OrbitCommandPalette {
                 applied: true,
                 phase: "apply",
                 attempts,
+                rateLimited: false,
                 preview,
                 validation,
                 applyResult: secondAttempt
               };
               return this.ok(parsed.cmd, out);
             }
-            let manualPayload = secondAttempt.manualPayload;
-            if (!manualPayload && exportOnFailure) {
-              try {
-                manualPayload = this.changesets.exportManualPayload(changesetId);
-              } catch {
-                // ignore
-              }
-            }
-            const out: ApplySafeResult = {
-              applied: false,
-              phase: "apply",
-              attempts,
-              reason: secondAttempt.reason ?? firstAttempt.reason,
-              preview,
-              validation,
-              applyResult: secondAttempt,
-              manualPayload,
-              instructions: secondAttempt.instructions
-            };
-            return this.ok(parsed.cmd, out);
+            latestAttempt = secondAttempt;
           }
 
-          let manualPayload = firstAttempt.manualPayload;
+          let waitedTotalMs = 0;
+          for (let retry = 1; latestAttempt.rateLimited && retry <= rateLimitRetries; retry += 1) {
+            const retryAfterMs =
+              typeof latestAttempt.retryAfterSeconds === "number" && latestAttempt.retryAfterSeconds > 0
+                ? latestAttempt.retryAfterSeconds * 1000
+                : 0;
+            const exponentialMs = Math.min(rateLimitBaseMs * 2 ** (retry - 1), 60_000);
+            const requestedWaitMs = Math.max(retryAfterMs, exponentialMs);
+            const remainingBudgetMs = Math.max(0, rateLimitMaxWaitMs - waitedTotalMs);
+            const waitForMs = Math.min(requestedWaitMs, remainingBudgetMs);
+            if (waitForMs <= 0) {
+              break;
+            }
+
+            await waitMs(waitForMs);
+            waitedTotalMs += waitForMs;
+
+            const retryAttempt = await this.changesets.apply(changesetId, confirm, { remoteValidate: false });
+            attempts.push({
+              phase: "rate-limit-retry",
+              remoteValidate: false,
+              applied: retryAttempt.applied,
+              reason: retryAttempt.reason,
+              waitMs: waitForMs
+            });
+
+            latestAttempt = retryAttempt;
+            if (retryAttempt.applied) {
+              const out: ApplySafeResult = {
+                applied: true,
+                phase: "apply",
+                attempts,
+                rateLimited: false,
+                preview,
+                validation,
+                applyResult: retryAttempt
+              };
+              return this.ok(parsed.cmd, out);
+            }
+          }
+
+          const retryAfterSeconds =
+            typeof latestAttempt.retryAfterSeconds === "number" && latestAttempt.retryAfterSeconds > 0
+              ? latestAttempt.retryAfterSeconds
+              : Math.max(1, Math.round(rateLimitBaseMs / 1000));
+          const nextRetryAt = latestAttempt.rateLimited
+            ? new Date(Date.now() + retryAfterSeconds * 1000).toISOString()
+            : undefined;
+
+          let manualPayload = latestAttempt.manualPayload;
           if (!manualPayload && exportOnFailure) {
             try {
               manualPayload = this.changesets.exportManualPayload(changesetId);
@@ -8275,12 +8354,15 @@ export class OrbitCommandPalette {
             applied: false,
             phase: "apply",
             attempts,
-            reason: firstAttempt.reason,
+            reason: latestAttempt.reason,
+            rateLimited: latestAttempt.rateLimited === true,
+            retryAfterSeconds: latestAttempt.rateLimited ? retryAfterSeconds : undefined,
+            nextRetryAt,
             preview,
             validation,
-            applyResult: firstAttempt,
+            applyResult: latestAttempt,
             manualPayload,
-            instructions: firstAttempt.instructions
+            instructions: latestAttempt.instructions
           };
           return this.ok(parsed.cmd, out);
         }
@@ -8663,10 +8745,44 @@ export class OrbitCommandPalette {
     }
   }
 
+  private canonicalFileKey(fileKey: string): string {
+    return fileKey.replace(/\.ya?ml$/i, "").toLowerCase();
+  }
+
+  private async fetchFileWithBackoff(
+    projectId: string,
+    fileKey: string,
+    retries: number,
+    baseBackoffMs: number,
+    warnings: string[]
+  ): Promise<string> {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await this.adapter.fetchFile(projectId, fileKey);
+      } catch (error) {
+        const isRetryable429 = error instanceof FlutterFlowApiError && error.status === 429 && attempt < retries;
+        if (!isRetryable429) {
+          throw error;
+        }
+        const retryAfterSeconds = Number.parseInt(error.request?.retryAfter ?? "", 10);
+        const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0;
+        const exponentialMs = Math.min(baseBackoffMs * 2 ** attempt, 60_000);
+        const sleepMs = Math.max(retryAfterMs, exponentialMs);
+        warnings.push(
+          `Rate limited on fetchFile ${fileKey} (attempt ${attempt + 1}/${retries + 1}); backing off ${sleepMs}ms before retry.`
+        );
+        attempt += 1;
+        await waitMs(sleepMs);
+      }
+    }
+  }
+
   private async refreshSnapshotOnce(
     snapshotId: string,
     options: {
       mode: "incremental" | "full";
+      fetchStrategy: FetchStrategy;
       maxFetch?: number;
       concurrency: number;
       sleepMs: number;
@@ -8678,6 +8794,11 @@ export class OrbitCommandPalette {
     fetchedCount: number;
     attemptedFetchCount: number;
     totalRemoteFiles: number;
+    strategyUsed: "bulk" | "file";
+    failedFetchCount: number;
+    partial: boolean;
+    pruneApplied: boolean;
+    authoritative: boolean;
     versionInfo: unknown;
     notes: string[];
     warnings: string[];
@@ -8692,6 +8813,7 @@ export class OrbitCommandPalette {
     );
     const remoteEntries = listed.files;
     const remoteKeys = remoteEntries.map((entry) => entry.fileKey);
+    const remoteCanonicalKeys = new Set(remoteKeys.map((key) => this.canonicalFileKey(key)));
     const localMap = new Map(this.snapshotRepo.listFileHashes(snapshotId).map((row) => [row.fileKey, row.sha256]));
     const existingVersionInfo = this.snapshotRepo.getVersionInfo(snapshotId);
 
@@ -8701,88 +8823,163 @@ export class OrbitCommandPalette {
       listed.versionInfo?.projectSchemaFingerprint &&
       existingVersionInfo.projectSchemaFingerprint === listed.versionInfo.projectSchemaFingerprint;
 
-    let fetchKeys: string[];
-    if (options.mode === "full") {
-      fetchKeys = remoteKeys;
-    } else if (fingerprintUnchanged) {
-      fetchKeys = remoteKeys.filter((key) => !localMap.has(key));
-    } else if (remoteEntries.some((entry) => typeof entry.hash === "string" && entry.hash.length > 0)) {
-      fetchKeys = remoteEntries
-        .filter((entry) => {
-          if (!entry.hash) {
-            return !localMap.has(entry.fileKey);
-          }
-          return localMap.get(entry.fileKey) !== entry.hash;
-        })
-        .map((entry) => entry.fileKey);
-    } else {
-      const heuristic = remoteKeys.filter((key) => /(page|component|route|theme|app_state|settings)/i.test(key));
-      const missing = remoteKeys.filter((key) => !localMap.has(key));
-      fetchKeys = [...new Set([...missing, ...heuristic.slice(0, 120)])];
-      if (fetchKeys.length === 0) {
-        fetchKeys = remoteKeys.slice(0, Math.min(50, remoteKeys.length));
-      }
-    }
+    const fetchedByKey = new Map<string, { fileKey: string; yaml: string; sha256: string }>();
+    const notes: string[] = [];
+    let attemptedFetchCount = 0;
+    let failedFetchCount = 0;
+    let strategyUsed: "bulk" | "file" = "file";
+    let partial = false;
+    let versionInfo: ProjectVersionInfo | undefined = listed.versionInfo;
 
-    const requestedFetchCount = fetchKeys.length;
-    if (options.maxFetch && options.maxFetch > 0 && fetchKeys.length > options.maxFetch) {
-      fetchKeys = fetchKeys.slice(0, options.maxFetch);
-      warnings.push(`Applied maxFetch budget: ${fetchKeys.length}/${requestedFetchCount} candidate files this run.`);
-    }
-
-    const fetchedRows = await mapLimit(fetchKeys, options.concurrency, async (fileKey) => {
-      if (options.sleepMs > 0) {
-        await waitMs(options.sleepMs);
+    const fetchByFileKeys = async (candidateKeys: string[], preferBudget = true): Promise<void> => {
+      let fetchKeys = candidateKeys;
+      const requestedFetchCount = fetchKeys.length;
+      if (preferBudget && options.maxFetch && options.maxFetch > 0 && fetchKeys.length > options.maxFetch) {
+        fetchKeys = fetchKeys.slice(0, options.maxFetch);
+        warnings.push(`Applied maxFetch budget: ${fetchKeys.length}/${requestedFetchCount} candidate files this run.`);
       }
+      attemptedFetchCount += fetchKeys.length;
+
+      const fetchedRows = await mapLimit(fetchKeys, options.concurrency, async (fileKey) => {
+        if (options.sleepMs > 0) {
+          await waitMs(options.sleepMs);
+        }
+        try {
+          const yaml = await this.fetchFileWithBackoff(
+            snapshot.projectId,
+            fileKey,
+            options.listRetries,
+            options.listRetryBaseMs,
+            warnings
+          );
+          return { fileKey, yaml, sha256: sha256(yaml) };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          warnings.push(`Failed to refresh '${fileKey}': ${message}`);
+          return undefined;
+        }
+      });
+
+      const fetched = fetchedRows.filter((row): row is { fileKey: string; yaml: string; sha256: string } => Boolean(row));
+      failedFetchCount += fetchKeys.length - fetched.length;
+      if (fetched.length < fetchKeys.length) {
+        partial = true;
+      }
+      for (const row of fetched) {
+        fetchedByKey.set(row.fileKey, row);
+      }
+    };
+
+    if (options.mode === "full" && (options.fetchStrategy === "auto" || options.fetchStrategy === "bulk")) {
+      strategyUsed = "bulk";
       try {
-        const yaml = await this.adapter.fetchFile(snapshot.projectId, fileKey);
-        return { fileKey, yaml, sha256: sha256(yaml) };
+        const bundled = await this.adapter.fetchProjectYamls(snapshot.projectId, undefined, { includeVersionInfo: true });
+        if (bundled.versionInfo) {
+          versionInfo = bundled.versionInfo;
+        }
+        for (const [fileKey, yaml] of Object.entries(bundled.files)) {
+          fetchedByKey.set(fileKey, { fileKey, yaml, sha256: sha256(yaml) });
+        }
+        attemptedFetchCount += remoteKeys.length;
+
+        const bundledCanonicalKeys = new Set(
+          [...fetchedByKey.values()].map((row) => this.canonicalFileKey(row.fileKey))
+        );
+        const missingKeys = remoteKeys.filter((key) => !bundledCanonicalKeys.has(this.canonicalFileKey(key)));
+        if (missingKeys.length > 0) {
+          warnings.push(
+            `Bulk projectYamls returned ${fetchedByKey.size} files but missed ${missingKeys.length}/${remoteKeys.length} listed files; fetching missing keys individually.`
+          );
+          strategyUsed = "file";
+          await fetchByFileKeys(missingKeys, true);
+        } else if (options.maxFetch && options.maxFetch > 0) {
+          warnings.push("Ignored maxFetch budget because full refresh used bulk projectYamls fetch.");
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        warnings.push(`Failed to refresh '${fileKey}': ${message}`);
-        return undefined;
+        warnings.push(`Bulk projectYamls fetch failed: ${message}. Falling back to per-file refresh.`);
+        strategyUsed = "file";
+        await fetchByFileKeys(remoteKeys, true);
       }
-    });
-    const fetched = fetchedRows.filter((row): row is { fileKey: string; yaml: string; sha256: string } => Boolean(row));
+    } else {
+      strategyUsed = "file";
+      let fetchKeys: string[];
+      if (options.mode === "full") {
+        fetchKeys = remoteKeys;
+      } else if (fingerprintUnchanged) {
+        fetchKeys = remoteKeys.filter((key) => !localMap.has(key));
+      } else if (remoteEntries.some((entry) => typeof entry.hash === "string" && entry.hash.length > 0)) {
+        fetchKeys = remoteEntries
+          .filter((entry) => {
+            if (!entry.hash) {
+              return !localMap.has(entry.fileKey);
+            }
+            return localMap.get(entry.fileKey) !== entry.hash;
+          })
+          .map((entry) => entry.fileKey);
+      } else {
+        const heuristic = remoteKeys.filter((key) => /(page|component|route|theme|app_state|settings)/i.test(key));
+        const missing = remoteKeys.filter((key) => !localMap.has(key));
+        fetchKeys = [...new Set([...missing, ...heuristic.slice(0, 120)])];
+        if (fetchKeys.length === 0) {
+          fetchKeys = remoteKeys.slice(0, Math.min(50, remoteKeys.length));
+        }
+      }
+      await fetchByFileKeys(fetchKeys, true);
+    }
 
-    if (fetched.length === 0 && remoteKeys.length > 0 && fetchKeys.length > 0) {
+    const fetched = [...fetchedByKey.values()];
+
+    if (fetched.length === 0 && remoteKeys.length > 0 && attemptedFetchCount > 0) {
       throw new Error(
         "Refresh failed: none of the selected remote files could be fetched from projectYamls. Check throttling/API path config and retry."
       );
     }
 
     this.snapshotRepo.upsertFiles(snapshotId, fetched);
-    if (listed.versionInfo) {
-      this.snapshotRepo.setVersionInfo(snapshotId, listed.versionInfo);
+    if (versionInfo) {
+      this.snapshotRepo.setVersionInfo(snapshotId, versionInfo);
     }
-    const canPruneMissing =
-      options.mode === "full" &&
-      warnings.length === 0 &&
-      fetched.length === remoteKeys.length &&
-      fetchKeys.length === remoteKeys.length;
+    const fetchedCanonicalKeys = new Set(fetched.map((row) => this.canonicalFileKey(row.fileKey)));
+    const hasAllRemoteKeys = [...remoteCanonicalKeys].every((key) => fetchedCanonicalKeys.has(key));
+    const canPruneMissing = options.mode === "full" && hasAllRemoteKeys && !partial;
+    let pruneApplied = false;
     if (canPruneMissing) {
       this.snapshotRepo.deleteMissingFiles(snapshotId, remoteKeys);
-    } else if (options.mode === "full" || remoteKeys.length !== fetched.length || fetchKeys.length !== remoteKeys.length) {
+      pruneApplied = true;
+    } else if (options.mode === "full" || remoteKeys.length !== fetched.length || attemptedFetchCount !== remoteKeys.length) {
       warnings.push(
         "Skipped pruning missing files after refresh to avoid data loss from partial fetches; run snapshots.refresh with mode=full after rate limits clear."
       );
     }
+
+    const authoritative = options.mode === "full" ? canPruneMissing : !partial;
+    if (!authoritative) {
+      warnings.push("Snapshot refresh is not authoritative yet due to partial or fallback fetch coverage.");
+    }
+
     this.snapshotRepo.touchSnapshot(snapshotId);
     await this.reindex(snapshotId);
 
     return {
       mode: options.mode,
       fetchedCount: fetched.length,
-      attemptedFetchCount: fetchKeys.length,
+      attemptedFetchCount,
       totalRemoteFiles: remoteKeys.length,
-      versionInfo: listed.versionInfo,
+      strategyUsed,
+      failedFetchCount,
+      partial,
+      pruneApplied,
+      authoritative,
+      versionInfo,
       warnings,
-      notes:
-        fingerprintUnchanged
-          ? ["Fingerprint unchanged. Refresh fetched only files missing from local snapshot."]
-          : options.mode === "incremental" && !remoteEntries.some((entry) => entry.hash)
+      notes: [
+        ...notes,
+        ...(fingerprintUnchanged ? ["Fingerprint unchanged. Refresh fetched only files missing from local snapshot."] : []),
+        ...(options.mode === "incremental" && !remoteEntries.some((entry) => entry.hash)
           ? ["Incremental refresh used heuristic mode because remote hashes were unavailable."]
-          : []
+          : [])
+      ]
     };
   }
 

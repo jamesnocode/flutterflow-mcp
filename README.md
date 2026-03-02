@@ -51,6 +51,7 @@ export FLUTTERFLOW_API_LIST_PARTITIONED_FILES_PATH=/listPartitionedFileNames
 export FLUTTERFLOW_API_PROJECT_YAMLS_PATH=/projectYamls
 export FLUTTERFLOW_API_VALIDATE_PROJECT_YAML_PATH=/validateProjectYaml
 export FLUTTERFLOW_API_UPDATE_PROJECT_YAML_PATH=/updateProjectByYaml
+export FLUTTERFLOW_API_MIN_INTERVAL_MS=1000
 ```
 
 ### 3) Run
@@ -196,6 +197,7 @@ Orbit snapshots are point-in-time and may be stale.
 When FlutterFlow returns `versionInfo` (`partitionerVersion`, `projectSchemaFingerprint`), Orbit stores it and uses it for smarter incremental refresh decisions.
 If FlutterFlow is rate-limiting refresh (`429`), prefer budgeted crawl mode:
 - `orbit({ cmd:"snapshots.refreshSlow", args:{ passes:4, pauseMs:15000, maxFetch:25, concurrency:1, sleepMs:250 } })`
+- `orbit({ cmd:"snapshots.refresh", args:{ mode:"full", fetchStrategy:"bulk" } })` for low-request full sync attempts
 
 ## Safe Editing Workflow
 

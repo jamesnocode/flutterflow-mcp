@@ -9,6 +9,13 @@ function mockJsonResponse(body: unknown): Response {
   });
 }
 
+function mockErrorResponse(status: number, body: string, headers?: Record<string, string>): Response {
+  return new Response(body, {
+    status,
+    headers: headers ?? { "content-type": "text/plain" }
+  });
+}
+
 describe("HttpFlutterFlowAdapter v2", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -40,7 +47,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     const result = await adapter.listPartitionedFileNames("proj_1");
@@ -66,7 +74,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     await expect(adapter.listProjects()).rejects.toThrow("Missing FLUTTERFLOW_API_TOKEN");
@@ -98,7 +107,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     const result = await adapter.listPartitionedFileNames("proj_1");
@@ -137,7 +147,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     const result = await adapter.fetchProjectYamls("proj_1");
@@ -177,7 +188,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     const result = await adapter.fetchProjectYamls("proj_1");
@@ -211,7 +223,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     const result = await adapter.listPartitionedFileNames("proj_1");
@@ -242,7 +255,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     const content = await adapter.fetchFile("proj_1", "page/id-home");
@@ -277,7 +291,8 @@ describe("HttpFlutterFlowAdapter v2", () => {
       projectYamlsPath: "/projectYamls",
       updateProjectByYamlPath: "/updateProjectByYaml",
       validateProjectYamlPath: "/validateProjectYaml",
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      minIntervalMs: 0
     });
 
     const push = await adapter.pushFiles("proj_1", [
@@ -297,5 +312,79 @@ describe("HttpFlutterFlowAdapter v2", () => {
     expect(body.fileKeyToContent["page/id-Scaffold_xkz5zwqw/page-widget-tree-outline/node/id-Text_wsxpaf81.yaml"]).toBe(
       undefined
     );
+  });
+
+  it("validateProjectYaml sends doc and legacy payload key aliases", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        body: {
+          status: "ok",
+          isValid: true
+        }
+      })
+    );
+
+    const adapter = new HttpFlutterFlowAdapter({
+      token: "token",
+      baseUrl: "https://api.flutterflow.io/v2",
+      listProjectsPath: "/l/listProjects",
+      listPartitionedFileNamesPath: "/listPartitionedFileNames",
+      projectYamlsPath: "/projectYamls",
+      updateProjectByYamlPath: "/updateProjectByYaml",
+      validateProjectYamlPath: "/validateProjectYaml",
+      timeoutMs: 5000,
+      minIntervalMs: 0
+    });
+
+    const result = await adapter.validateProjectYaml("proj_1", "page/id-home.yaml", "page:\n  name: Home\n");
+    expect(result.ok).toBe(true);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as Record<string, string>;
+    expect(body.fileKey).toBe("page/id-home.yaml");
+    expect(body.fileName).toBe("page/id-home.yaml");
+    expect(body.fileContent).toContain("name: Home");
+    expect(body.yamlContent).toContain("name: Home");
+  });
+
+  it("retries pushFiles once on 429 and succeeds", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        body: {
+          fileNames: ["page/id-home"]
+        }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      mockErrorResponse(429, "Too Many Requests", {
+        "content-type": "text/plain",
+        "retry-after": "0"
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        success: true,
+        value: ""
+      })
+    );
+
+    const adapter = new HttpFlutterFlowAdapter({
+      token: "token",
+      baseUrl: "https://api.flutterflow.io/v2",
+      listProjectsPath: "/l/listProjects",
+      listPartitionedFileNamesPath: "/listPartitionedFileNames",
+      projectYamlsPath: "/projectYamls",
+      updateProjectByYamlPath: "/updateProjectByYaml",
+      validateProjectYamlPath: "/validateProjectYaml",
+      timeoutMs: 5000,
+      minIntervalMs: 0
+    });
+
+    const result = await adapter.pushFiles("proj_1", [{ fileKey: "page/id-home.yaml", yaml: "page:\n  name: Home\n" }]);
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

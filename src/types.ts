@@ -32,6 +32,18 @@ export interface PushResult {
   details?: unknown;
 }
 
+export interface ApplyResult {
+  applied: boolean;
+  reason?: string;
+  preview?: ChangesetPreview;
+  manualPayload?: ManualApplyPayload;
+  pushResult?: unknown;
+  instructions?: string;
+  rateLimited?: boolean;
+  retryAfterSeconds?: number;
+  statusCode?: number;
+}
+
 export interface SnapshotRecord {
   snapshotId: string;
   projectId: string;
@@ -284,9 +296,11 @@ export interface RouteUpsertArgs {
 }
 
 export interface ApplySafeAttempt {
+  phase?: "initial" | "remote-validate-retry" | "rate-limit-retry";
   remoteValidate: boolean;
   applied: boolean;
   reason?: string;
+  waitMs?: number;
 }
 
 export interface ApplySafeResult {
@@ -294,6 +308,9 @@ export interface ApplySafeResult {
   phase: "preview" | "validate" | "apply";
   attempts: ApplySafeAttempt[];
   reason?: string;
+  rateLimited?: boolean;
+  retryAfterSeconds?: number;
+  nextRetryAt?: string;
   preview?: ChangesetPreview;
   validation?: ChangesetValidation;
   applyResult?: unknown;

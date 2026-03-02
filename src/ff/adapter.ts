@@ -1,6 +1,7 @@
 import { strFromU8, unzipSync } from "fflate";
 import { fillPath, type FlutterFlowApiConfig } from "./config.js";
 import { HttpClient } from "./httpClient.js";
+import { FlutterFlowApiError } from "./errors.js";
 import type { FileKeyEntry, FileUpdate, ProjectSummary, ProjectVersionInfo, PushResult } from "../types.js";
 
 export interface FlutterFlowAdapter {
@@ -371,7 +372,41 @@ export class HttpFlutterFlowAdapter implements FlutterFlowAdapter {
   private readonly http: HttpClient;
 
   constructor(private readonly config: FlutterFlowApiConfig) {
-    this.http = new HttpClient({ token: config.token, timeoutMs: config.timeoutMs });
+    this.http = new HttpClient({
+      token: config.token,
+      timeoutMs: config.timeoutMs,
+      minIntervalMs: config.minIntervalMs
+    });
+  }
+
+  private retryDelayMs(error: FlutterFlowApiError, baseBackoffMs: number, attempt: number): number {
+    const retryAfterSeconds = Number.parseInt(error.request?.retryAfter ?? "", 10);
+    const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0;
+    const exponentialMs = Math.min(baseBackoffMs * 2 ** attempt, 60_000);
+    return Math.max(retryAfterMs, exponentialMs);
+  }
+
+  private async requestJsonWith429Retry<T>(
+    url: string,
+    init: RequestInit,
+    options?: { retries?: number; baseBackoffMs?: number }
+  ): Promise<T> {
+    const retries = Math.max(0, options?.retries ?? 2);
+    const baseBackoffMs = Math.max(250, options?.baseBackoffMs ?? 1500);
+
+    let attempt = 0;
+    while (true) {
+      try {
+        return await this.http.requestJson<T>(url, init);
+      } catch (error) {
+        if (!(error instanceof FlutterFlowApiError) || error.status !== 429 || attempt >= retries) {
+          throw error;
+        }
+        const waitMs = this.retryDelayMs(error, baseBackoffMs, attempt);
+        attempt += 1;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+    }
   }
 
   private url(path: string): string {
@@ -513,7 +548,10 @@ export class HttpFlutterFlowAdapter implements FlutterFlowAdapter {
 
       // Support either POST or GET styles across API variants.
       try {
-        const raw = await this.http.requestJson<unknown>(requestUrl, { method: "POST", body: JSON.stringify({}) });
+        const raw = await this.requestJsonWith429Retry<unknown>(requestUrl, {
+          method: "POST",
+          body: JSON.stringify({})
+        });
         const projects = toProjectSummaries(raw);
         if (projects.length > 0) {
           return projects;
@@ -523,7 +561,7 @@ export class HttpFlutterFlowAdapter implements FlutterFlowAdapter {
       }
 
       try {
-        const raw = await this.http.requestJson<unknown>(requestUrl, { method: "GET" });
+        const raw = await this.requestJsonWith429Retry<unknown>(requestUrl, { method: "GET" });
         const projects = toProjectSummaries(raw);
         if (projects.length > 0) {
           return projects;
@@ -542,7 +580,7 @@ export class HttpFlutterFlowAdapter implements FlutterFlowAdapter {
   async listPartitionedFileNames(projectId: string): Promise<{ files: FileKeyEntry[]; versionInfo?: ProjectVersionInfo }> {
     const path = this.config.listPartitionedFileNamesPath;
     const url = `${this.url(path)}?projectId=${encodeURIComponent(projectId)}`;
-    const raw = await this.http.requestJson<unknown>(url, { method: "GET" });
+    const raw = await this.requestJsonWith429Retry<unknown>(url, { method: "GET" });
     return toFileKeyEntries(raw);
   }
 
@@ -561,7 +599,7 @@ export class HttpFlutterFlowAdapter implements FlutterFlowAdapter {
     }
 
     const url = `${this.url(path)}?${params.toString()}`;
-    const raw = await this.http.requestJson<unknown>(url, { method: "GET" });
+    const raw = await this.requestJsonWith429Retry<unknown>(url, { method: "GET" });
     return toProjectYamlMap(raw);
   }
 
@@ -599,10 +637,10 @@ export class HttpFlutterFlowAdapter implements FlutterFlowAdapter {
     const url = this.url(path);
     const fileKeyToContent = await this.buildPushMap(projectId, updates);
 
-    const raw = await this.http.requestJson<unknown>(url, {
+    const raw = await this.requestJsonWith429Retry<unknown>(url, {
       method: "POST",
       body: JSON.stringify({ projectId, fileKeyToContent })
-    });
+    }, { retries: 3, baseBackoffMs: 1500 });
 
     return this.parsePushResult(raw);
   }
@@ -617,14 +655,16 @@ export class HttpFlutterFlowAdapter implements FlutterFlowAdapter {
 
     for (const candidate of candidates) {
       try {
-        const raw = await this.http.requestJson<unknown>(url, {
+        const raw = await this.requestJsonWith429Retry<unknown>(url, {
           method: "POST",
           body: JSON.stringify({
             projectId,
+            fileKey: candidate,
             fileName: candidate,
+            fileContent: content,
             yamlContent: content
           })
-        });
+        }, { retries: 2, baseBackoffMs: 1200 });
 
         const parsed = this.parseValidationResult(raw);
         if (parsed.ok) {

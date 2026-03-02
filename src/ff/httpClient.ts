@@ -3,9 +3,13 @@ import { FlutterFlowApiError } from "./errors.js";
 export interface HttpClientOptions {
   token: string;
   timeoutMs: number;
+  minIntervalMs: number;
 }
 
 export class HttpClient {
+  private static gate: Promise<void> = Promise.resolve();
+  private static nextAllowedAt = 0;
+
   constructor(private readonly options: HttpClientOptions) {}
 
   private authorizationHeader(): string {
@@ -18,7 +22,28 @@ export class HttpClient {
     return `Bearer ${token}`;
   }
 
+  private async waitForGlobalPacing(): Promise<void> {
+    const minIntervalMs = Math.max(0, Math.trunc(this.options.minIntervalMs || 0));
+    if (minIntervalMs <= 0) {
+      return;
+    }
+
+    HttpClient.gate = HttpClient.gate
+      .catch(() => undefined)
+      .then(async () => {
+        const now = Date.now();
+        const waitMs = Math.max(0, HttpClient.nextAllowedAt - now);
+        if (waitMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+        HttpClient.nextAllowedAt = Date.now() + minIntervalMs;
+      });
+
+    await HttpClient.gate;
+  }
+
   async requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+    await this.waitForGlobalPacing();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs);
 
@@ -54,6 +79,7 @@ export class HttpClient {
   }
 
   async requestText(url: string, init: RequestInit = {}): Promise<string> {
+    await this.waitForGlobalPacing();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs);
 

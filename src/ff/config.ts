@@ -7,6 +7,7 @@ export interface FlutterFlowApiConfig {
   updateProjectByYamlPath: string;
   validateProjectYamlPath: string;
   timeoutMs: number;
+  minIntervalMs: number;
 }
 
 const DEFAULTS = {
@@ -16,7 +17,8 @@ const DEFAULTS = {
   projectYamlsPath: "/projectYamls",
   updateProjectByYamlPath: "/updateProjectByYaml",
   validateProjectYamlPath: "/validateProjectYaml",
-  timeoutMs: 20_000
+  timeoutMs: 20_000,
+  minIntervalMs: 1_000
 } as const;
 
 export function loadFlutterFlowApiConfig(): FlutterFlowApiConfig {
@@ -48,7 +50,8 @@ export function loadFlutterFlowApiConfig(): FlutterFlowApiConfig {
       process.env.FLUTTERFLOW_API_VALIDATE_PROJECT_YAML_PATH?.trim() ||
       process.env.FLUTTERFLOW_API_VALIDATE_PATH?.trim() ||
       DEFAULTS.validateProjectYamlPath,
-    timeoutMs: Number.parseInt(process.env.FLUTTERFLOW_API_TIMEOUT_MS ?? "", 10) || DEFAULTS.timeoutMs
+    timeoutMs: Number.parseInt(process.env.FLUTTERFLOW_API_TIMEOUT_MS ?? "", 10) || DEFAULTS.timeoutMs,
+    minIntervalMs: Number.parseInt(process.env.FLUTTERFLOW_API_MIN_INTERVAL_MS ?? "", 10) || DEFAULTS.minIntervalMs
   };
 }
 

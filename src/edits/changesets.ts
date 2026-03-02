@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import YAML from "yaml";
 import type {
+  ApplyResult,
   ChangesetEntry,
   ChangesetPreview,
   ChangesetRecord,
@@ -17,6 +18,7 @@ import { buildUnifiedDiff, countChangedLines } from "./diff.js";
 import { applyPatchSpec } from "./patch.js";
 import { validateYamlStructure } from "./validate.js";
 import type { FlutterFlowAdapter } from "../ff/adapter.js";
+import { FlutterFlowApiError } from "../ff/errors.js";
 import { SnapshotRepo } from "../store/snapshotRepo.js";
 import { PolicyEngine } from "../policy/engine.js";
 
@@ -314,14 +316,7 @@ export class ChangesetService {
     return result;
   }
 
-  async apply(changesetId: string, confirm: boolean, options?: { remoteValidate?: boolean }): Promise<{
-    applied: boolean;
-    reason?: string;
-    preview?: ChangesetPreview;
-    manualPayload?: ManualApplyPayload;
-    pushResult?: unknown;
-    instructions?: string;
-  }> {
+  async apply(changesetId: string, confirm: boolean, options?: { remoteValidate?: boolean }): Promise<ApplyResult> {
     if (!confirm) {
       throw new Error("changeset.apply requires confirm=true");
     }
@@ -391,13 +386,50 @@ export class ChangesetService {
       }
     }
 
-    const pushResult = await this.adapter.pushFiles(snapshot.projectId, materialized.updates);
+    let pushResult;
+    try {
+      pushResult = await this.adapter.pushFiles(snapshot.projectId, materialized.updates);
+    } catch (error) {
+      if (error instanceof FlutterFlowApiError) {
+        const retryAfterSecondsRaw = Number.parseInt(error.request?.retryAfter ?? "", 10);
+        const retryAfterSeconds = Number.isFinite(retryAfterSecondsRaw) && retryAfterSecondsRaw > 0 ? retryAfterSecondsRaw : undefined;
+        const method = error.request?.method ?? "POST";
+        const url = error.request?.url ?? "unknown-endpoint";
+        return {
+          applied: false,
+          reason:
+            `FlutterFlow API request failed (${error.status}) | ${method} ${url}` +
+            ` | rate_limit: retry later${retryAfterSeconds ? ` (retry-after=${retryAfterSeconds}s)` : ""}`,
+          preview: materialized.preview,
+          pushResult: { status: error.status, body: error.body },
+          rateLimited: error.status === 429,
+          retryAfterSeconds,
+          statusCode: error.status
+        } satisfies ApplyResult;
+      }
+      throw error;
+    }
+
     if (!pushResult.ok) {
       return {
         applied: false,
         reason: pushResult.message ?? "Remote push failed",
         preview: materialized.preview,
-        pushResult
+        pushResult,
+        rateLimited:
+          typeof pushResult.message === "string" &&
+          /\(429\)|rate[_ -]?limit|retry-after/i.test(pushResult.message),
+        retryAfterSeconds:
+          typeof pushResult.message === "string"
+            ? (() => {
+                const match = /retry-after\s*=\s*(\d+)s/i.exec(pushResult.message);
+                if (!match) {
+                  return undefined;
+                }
+                const seconds = Number.parseInt(match[1] ?? "", 10);
+                return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+              })()
+            : undefined
       };
     }
 

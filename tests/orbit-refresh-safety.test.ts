@@ -233,4 +233,143 @@ describe("orbit snapshots.refresh safety", () => {
     expect(result.warnings.some((warning) => warning.includes("Rate limited on listPartitionedFileNames"))).toBe(true);
     db.close();
   });
+
+  it("uses bulk projectYamls for full refresh and can prune missing files", async () => {
+    let bulkCalls = 0;
+    let fetchCalls = 0;
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return [
+          { fileKey: "page/id-Scaffold_1.yaml", hash: sha256("pageName: One\n") },
+          { fileKey: "page/id-Scaffold_2.yaml", hash: sha256("pageName: Two\n") }
+        ];
+      },
+      async fetchFile() {
+        fetchCalls += 1;
+        return "";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        return {
+          files: [
+            { fileKey: "page/id-Scaffold_1.yaml", hash: sha256("pageName: One\n") },
+            { fileKey: "page/id-Scaffold_2.yaml", hash: sha256("pageName: Two\n") }
+          ]
+        };
+      },
+      async fetchProjectYamls() {
+        bulkCalls += 1;
+        return {
+          files: {
+            "page/id-Scaffold_1.yaml": "pageName: One\n",
+            "page/id-Scaffold_2.yaml": "pageName: Two\n"
+          }
+        };
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-full-bulk");
+    const stale = "pageName: Legacy\n";
+    snapshotRepo.upsertFiles(snapshot.snapshotId, [
+      { fileKey: "page/id-Scaffold_legacy.yaml", yaml: stale, sha256: sha256(stale) }
+    ]);
+
+    const result = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: { mode: "full", fetchStrategy: "bulk" }
+    });
+
+    expect(result.ok).toBe(true);
+    const data = result.data as { strategyUsed: string; pruneApplied: boolean; authoritative: boolean };
+    expect(data.strategyUsed).toBe("bulk");
+    expect(data.pruneApplied).toBe(true);
+    expect(data.authoritative).toBe(true);
+    expect(bulkCalls).toBe(1);
+    expect(fetchCalls).toBe(0);
+    expect(snapshotRepo.listFiles(snapshot.snapshotId, "page/", 10_000).map((file) => file.fileKey)).toEqual([
+      "page/id-Scaffold_1.yaml",
+      "page/id-Scaffold_2.yaml"
+    ]);
+    db.close();
+  });
+
+  it("falls back from bulk full refresh to per-file mode when bulk fails", async () => {
+    let bulkCalls = 0;
+    let fetchCalls = 0;
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return [
+          { fileKey: "page/id-Scaffold_1.yaml", hash: sha256("pageName: One\n") },
+          { fileKey: "page/id-Scaffold_2.yaml", hash: sha256("pageName: Two\n") }
+        ];
+      },
+      async fetchFile(_projectId, fileKey) {
+        fetchCalls += 1;
+        if (fileKey.endsWith("_2.yaml")) {
+          throw new Error("429");
+        }
+        return "pageName: One\n";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        return {
+          files: [
+            { fileKey: "page/id-Scaffold_1.yaml", hash: sha256("pageName: One\n") },
+            { fileKey: "page/id-Scaffold_2.yaml", hash: sha256("pageName: Two\n") }
+          ]
+        };
+      },
+      async fetchProjectYamls() {
+        bulkCalls += 1;
+        throw new FlutterFlowApiError("rate limited", 429, "", {
+          method: "GET",
+          url: "https://api.flutterflow.io/v2/projectYamls",
+          retryAfter: "0"
+        });
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-full-bulk-fallback");
+    const result = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: { mode: "full", fetchStrategy: "bulk", maxFetch: 20, concurrency: 1 }
+    });
+
+    expect(result.ok).toBe(true);
+    const data = result.data as { strategyUsed: string; partial: boolean; authoritative: boolean; pruneApplied: boolean };
+    expect(data.strategyUsed).toBe("file");
+    expect(data.partial).toBe(true);
+    expect(data.authoritative).toBe(false);
+    expect(data.pruneApplied).toBe(false);
+    expect(bulkCalls).toBe(1);
+    expect(fetchCalls).toBeGreaterThan(0);
+    expect(result.warnings.some((warning) => warning.includes("Bulk projectYamls fetch failed"))).toBe(true);
+    db.close();
+  });
 });
