@@ -1,0 +1,36 @@
+---
+description: Setup and operational defaults for running ff-mcp as an MCP server.
+alwaysApply: true
+---
+
+# Orbit Setup and Config
+
+MCP server defaults:
+- Server name: `ff_orbit_mcp` (alias can vary by client).
+- Command: `npm`
+- Args: `["start"]`
+- Working directory: this repository root.
+- Required env: `FLUTTERFLOW_API_TOKEN`
+
+Client config templates:
+- Cursor/Windsurf/Claude Desktop: `templates/mcp-config.local.json`
+- Claude Code: `templates/claude-code.mcp.json` (`.mcp.json` in project)
+- Codex: `templates/codex-config.toml` (`~/.codex/config.toml`)
+
+Recommended env:
+- `FLUTTERFLOW_API_MIN_INTERVAL_MS=1000`
+- `ORBIT_POLICY_SAFE_MODE=guidedWrite`
+
+Startup checks:
+1) `orbit({cmd:"help"})`
+2) `orbit({cmd:"projects.list"})`
+3) `orbit({cmd:"snapshots.info"})` (if active snapshot exists)
+
+Notes:
+- Local MCP server does not require a remote Orbit host.
+- FlutterFlow API calls still require network access and a valid token.
+- If startup fails during initialize, verify token, `cwd`, and MCP config command/args.
+
+429 handling baseline:
+- Prefer conservative refresh: `snapshots.refresh` with `mode:"incremental", fetchStrategy:"auto", concurrency:1`
+- Prefer bounded write retries: `changeset.applySafe` with `confirm:true`

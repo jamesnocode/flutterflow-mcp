@@ -1,6 +1,7 @@
-# FF Orbit Cursor Rules
+# FF Orbit Rule Pack
 
-This directory contains an FF-Orbit-specific Cursor rule pack to improve AI reliability and shorten prompt requirements.
+This directory is the canonical Cursor/agent rule pack for `flutterflow-mcp`.
+It is versioned with the MCP server so rules and command behavior stay in sync.
 
 ## Included files
 
@@ -13,20 +14,22 @@ This directory contains an FF-Orbit-specific Cursor rule pack to improve AI reli
 - `ff-orbit-policy-guardrails.mdc`
 - `ff-orbit-search-schema-debugging.mdc`
 - `ff-orbit-short-prompt-mapping.mdc`
+- `orbit-setup-and-config.mdc`
 
-## Purpose
+## Rules maintenance contract
 
-These rules teach AI assistants to:
+When command behavior changes in `src/mcp/orbitTool.ts` or adapter behavior changes in `src/ff/*`, update this rules pack in the same PR/commit.
 
-1. Use first-class Orbit commands before low-level patching
-2. Handle snapshot freshness and fallback correctly
-3. Perform page and widget CRUD through deterministic flows
-4. Respect policy/approval boundaries
-5. Debug command/schema/path mismatches quickly
-6. Interpret short user prompts into robust command sequences
+Minimum update checklist:
 
-## Notes
+1. Command help examples reflect current args/defaults.
+2. Snapshot guidance reflects current throttling behavior.
+3. Apply guidance reflects current `changeset.applySafe` behavior.
+4. Natural language mapping reflects current `intent.run` aliases.
+5. Setup docs reflect current required env vars and startup behavior.
 
-- `page.delete` is treated as soft-delete in this integration.
-- For critical writes, use preview/validate/apply with explicit confirmation.
-- Prefer non-strict page listing unless the user asks for strict pinned snapshot behavior.
+## Companion docs and templates
+
+- `docs/agent-playbook.md` for one-page operator guidance.
+- `templates/mcp-config.local.json`, `templates/mcp-config-remote.json`, `templates/claude-code.mcp.json`, and `templates/codex-config.toml` for client-specific setup.
+- `scripts/install-cursor-rules.sh` to install this pack into another repository.

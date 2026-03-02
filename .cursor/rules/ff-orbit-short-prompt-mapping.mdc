@@ -5,15 +5,18 @@ alwaysApply: true
 
 # Short Prompt Mapping
 
-Map user intent to first-class commands directly.
+Map intent to first-class commands in 1-2 calls.
 
 Examples:
 - "List pages" -> `pages.list`
 - "Show widgets on login" -> `widgets.list {nameOrId:"login"}`
+- "All text fields on login" -> `textfields.list {nameOrId:"login"}`
 - "Get this widget" -> `widget.get {nameOrId:<page>, nodeId:<id>}`
-- "Change brand.ai to James NoCode on login" -> locate text node then `widget.set`
-- "Create a button under this container" -> `widget.create`
+- "Change text on this widget" -> `widget.set {nameOrId:<page>, nodeId:<id>, text:"..."}`
+- "Create a button under this container" -> `widget.insert` or `widget.create`
 - "Remove widget id-Button_x on onboarding" -> `widget.delete`
 - "Rename Onboarding to Intro" -> `page.update`
+- "Refresh snapshot from FlutterFlow" -> `snapshots.refresh {mode:"incremental", fetchStrategy:"auto"}`
+- "Try safe apply under rate limits" -> `changeset.applySafe {changesetId:"...", confirm:true}`
 
 Always return resolved IDs and fileKeys in response summaries.

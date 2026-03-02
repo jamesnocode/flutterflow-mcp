@@ -1,20 +1,23 @@
 ---
-description: Search/schema/debug workflow for resolving unknown paths and command failures.
+description: Deterministic debugging workflow for command failures and stale-data symptoms.
 alwaysApply: true
 ---
 
 # Search, Schema, Debugging
 
-When command args/paths are unclear:
-1) `help`
-2) `schema.search` / `schema.read` / `schema.snippet`
-3) `search` in snapshot content for exact keys/values
-4) `widgets.list` + `widget.get` to inspect concrete node shape
+Default order:
+1) Run target command directly when intent is clear.
+2) If shape is unclear, use `help` or `help` with command context.
+3) Resolve selectors with `pages.list`, `widgets.list`, `textfields.list`, `widget.get`.
+4) Use `search` for content discovery.
+5) Use `schema.search` / `schema.read` / `schema.snippet` only for unfamiliar patterns or advanced debugging.
 
 For page/widget not found:
 - Resolve via `pages.list` first.
 - Use returned `pageId`/`nodeId` explicitly.
 
-For transient API issues (404/429/Unknown error):
-- Prefer local snapshot fallback for reads.
-- Record warning context and avoid destructive assumptions.
+For transient API issues (`429`, transport errors, unknown remote failures):
+- Prefer local snapshot reads first.
+- Refresh snapshot conservatively (`snapshots.refresh` / `snapshots.refreshSlow`).
+- Avoid destructive assumptions on partial refreshes.
+- Return concrete next command, not diagnosis only.

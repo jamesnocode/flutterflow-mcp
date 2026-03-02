@@ -5,16 +5,27 @@ alwaysApply: true
 
 # Policy Guardrails
 
-Writes are gated by policy.
+Policy decisions are authoritative for write operations.
+
+Expected controls:
+- `safeMode`: `readOnly | guidedWrite | fullWrite`
+- `allowProjects`
+- `allowFileKeyPrefixes` / `denyFileKeyPrefixes`
+- `maxFilesPerApply`
+- `maxLinesChanged`
+- `requireManualApproval`
+- `allowPlatformConfigEdits`
+
 Common blockers:
 - File key not in `allowFileKeyPrefixes`
 - Matches `denyFileKeyPrefixes`
 - `requireManualApproval`
 - max file/line thresholds
 
-Best practice:
-- Read policy via `orbit_policy_get` when writes are blocked.
-- Return exact blocked file key(s) and policy reason.
-- Do not report success if apply was policy-blocked.
+Required behavior:
+- In `readOnly`, do not attempt apply.
+- If blocked, return exact blocked `fileKey` values and policy reason.
+- If manual approval is required, return manual payload instructions.
+- Never report success when apply is policy-blocked.
 
 Policy updates may be disabled unless `ORBIT_ALLOW_POLICY_WRITE=1`.

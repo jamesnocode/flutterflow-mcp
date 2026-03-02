@@ -9,12 +9,22 @@ Use this order for writes:
 1) Create/extend changeset
 2) `changeset.preview`
 3) `changeset.validate`
-4) `changeset.apply` with `confirm:true`
+4) `changeset.applySafe` with `confirm:true` (preferred)
 
 Apply behavior notes:
 - Respect `applyResult.applied` as final truth.
 - If blocked, surface `reason` and next step.
 - Use `orbit_export_changeset` for manual fallback payloads.
+
+`changeset.applySafe` reliability args:
+- `rateLimitRetries` (default `3`)
+- `rateLimitBaseMs` (default `1500`)
+- `rateLimitMaxWaitMs` (default `90000`)
+
+When rate-limited:
+- Prefer `changeset.applySafe` over manual retry loops.
+- Report `rateLimited`, `retryAfterSeconds`, and `nextRetryAt` when present.
+- Do not claim page/widget state changed until apply actually succeeds.
 
 Remote validation:
 - Default to remote validation when stable.

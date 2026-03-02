@@ -16,9 +16,14 @@ orbit({ cmd: string, args?: object, snapshot?: string, format?: "json"|"explain"
 ```
 
 Primary command groups:
-- Discovery: `projects.list`, `snapshots.create`, `snapshots.refresh`, `snapshots.info`, `snapshots.ls`
-- Query: `pages.list`, `page.get`, `widgets.list`, `widget.get`, `search`, `summarize.*`
-- Edit: `page.create`, `page.update`, `page.delete`, `widget.create`, `widget.set`, `widget.delete`
-- Safety: `changeset.preview`, `changeset.validate`, `changeset.apply`, `changeset.drop`
+- Discovery: `projects.list`, `snapshots.create`, `snapshots.refresh`, `snapshots.refreshSlow`, `snapshots.ensureFresh`, `snapshots.info`, `snapshots.ls`
+- Query: `pages.list`, `page.get`, `widgets.list`, `textfields.list`, `widget.get`, `widget.getMany`, `widgets.find`, `search`
+- Edit: `page.create`, `page.update`, `page.remove`, `page.clone`, `widget.create`, `widget.set`, `widget.delete`, `routes.upsert`, `routes.delete`
+- Safety: `changeset.preview`, `changeset.validate`, `changeset.apply`, `changeset.applySafe`, `changeset.rollback`, `changeset.drop`
 
 Prefer deterministic commands over exploratory probing.
+
+Current reliability features:
+- `snapshots.refresh` supports `fetchStrategy: auto|bulk|file`.
+- `changeset.applySafe` supports bounded 429 retry controls.
+- `intent.run` can map natural refresh prompts to `snapshots.refresh`.

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ff_orbit_mcp_remote": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/inspector", "https://your-orbit-host.example.com"]
+    }
+  }
+}

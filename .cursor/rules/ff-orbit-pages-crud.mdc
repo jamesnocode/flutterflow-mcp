@@ -1,20 +1,28 @@
 ---
-description: First-class page CRUD usage patterns and caveats.
+description: First-class page workflows with safe remove semantics and deterministic selectors.
 alwaysApply: true
 ---
 
-# Pages CRUD
+# Pages Commands
 
-Commands:
+Use page-first commands before low-level patching.
+
+Read path:
+- Inventory: `pages.list`
+- Details: `page.get`
+
+Write path:
 - Create: `page.create`
-- Read: `pages.list`, `page.get`
-- Update: `page.update`
-- Delete: `page.delete`
+- Rename/update metadata: `page.update`
+- Clone: `page.clone`
+- Pre-delete checks: `page.preflightDelete`
+- Remove (preferred): `page.remove`
+- Low-level delete attempt: `page.delete`
 
-Important:
-- `page.delete` is soft-delete in this integration (YAML marker), not hard remote file deletion.
-- Soft-deleted pages are hidden by default in `pages.list`.
-- Use `includeDeleted:true` to audit deleted pages.
+Deletion behavior:
+- Prefer `page.remove` for production workflows. It performs safety checks and can fall back to archive mode when remote delete is rejected.
+- `page.delete` is low-level and should be used only when explicit hard-delete behavior is required.
+- `pages.list` hides deleted pages by default; use `includeDeleted:true` to audit.
 
 Recommended patterns:
 - Create page:
@@ -25,7 +33,11 @@ Recommended patterns:
 ```json
 {"cmd":"page.update","args":{"nameOrId":"Landing","key":"name","value":"LandingV2","apply":true}}
 ```
-- Soft-delete page:
+- Safer removal:
 ```json
-{"cmd":"page.delete","args":{"nameOrId":"LandingV2","apply":true}}
+{"cmd":"page.remove","args":{"nameOrId":"LandingV2","apply":true}}
 ```
+
+Output rules:
+- Always return resolved `snapshotId`, `pageId`, and `fileKey` for writes.
+- Only report success when `applied === true`.

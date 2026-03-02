@@ -1,0 +1,6 @@
+[mcp_servers.ff_orbit_mcp]
+command = "npm"
+args = ["start"]
+cwd = "/absolute/path/to/ff-mcp"
+env = { FLUTTERFLOW_API_TOKEN = "YOUR_TOKEN", FLUTTERFLOW_API_MIN_INTERVAL_MS = "1000", ORBIT_POLICY_SAFE_MODE = "guidedWrite" }
+enabled = true

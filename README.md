@@ -15,7 +15,7 @@ Orbit is different from multi-tool MCP servers by design:
 ## Features
 
 - Node.js 18+ TypeScript strict implementation
-- MCP stdio transport for Claude Desktop/Cursor/Windsurf
+- MCP stdio transport for Claude Desktop/Cursor/Windsurf/Claude Code/Codex
 - Separate HTTP health/status/policy service on port `8080`
 - FlutterFlow API adapter (set `FLUTTERFLOW_API_TOKEN` for remote reads/writes)
 - SQLite snapshot store (files, hashes, symbols, edges)
@@ -82,15 +82,17 @@ export ORBIT_HTTP_ENABLED=0
 
 Use `npm start` as your MCP command.
 
-### Claude Desktop example
+### Claude Desktop / Cursor / Windsurf
+
+Use `templates/mcp-config.local.json` as a base:
 
 ```json
 {
   "mcpServers": {
-    "flutterflow-mcp": {
+    "ff_orbit_mcp": {
       "command": "npm",
       "args": ["start"],
-      "cwd": "/absolute/path/to/flutterflow-mcp",
+      "cwd": "/absolute/path/to/ff-mcp",
       "env": {
         "FLUTTERFLOW_API_TOKEN": "YOUR_TOKEN"
       }
@@ -99,14 +101,70 @@ Use `npm start` as your MCP command.
 }
 ```
 
-### Cursor / Windsurf
+### Claude Code
 
-Add an MCP server entry pointing to:
+Use project config file `.mcp.json` (you can copy `templates/claude-code.mcp.json`):
 
-- command: `npm`
-- args: `["start"]`
-- cwd: repository root
-- env: `FLUTTERFLOW_API_TOKEN`
+```json
+{
+  "mcpServers": {
+    "ff_orbit_mcp": {
+      "command": "npm",
+      "args": ["start"],
+      "cwd": "/absolute/path/to/ff-mcp",
+      "env": {
+        "FLUTTERFLOW_API_TOKEN": "YOUR_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Or add it with CLI:
+
+```bash
+claude mcp add -s project -e FLUTTERFLOW_API_TOKEN=YOUR_TOKEN ff_orbit_mcp -- npm start
+```
+
+### Codex (CLI / App)
+
+Option A: add via CLI:
+
+```bash
+codex mcp add ff_orbit_mcp --env FLUTTERFLOW_API_TOKEN=YOUR_TOKEN -- node /absolute/path/to/ff-mcp/dist/main.js
+```
+
+Build once before using the command above:
+
+```bash
+npm run build
+```
+
+Option B: add to `~/.codex/config.toml` (see `templates/codex-config.toml`):
+
+```toml
+[mcp_servers.ff_orbit_mcp]
+command = "npm"
+args = ["start"]
+cwd = "/absolute/path/to/ff-mcp"
+env = { FLUTTERFLOW_API_TOKEN = "YOUR_TOKEN" }
+enabled = true
+```
+
+## Agent Rule Pack
+
+This repository now includes a clone-ready rule/setup pack for agents:
+
+- Rules: `.cursor/rules/`
+- Playbook: `docs/agent-playbook.md`
+- MCP config templates: `templates/mcp-config.local.json`, `templates/mcp-config-remote.json`, `templates/claude-code.mcp.json`, `templates/codex-config.toml`
+- Installer script: `scripts/install-cursor-rules.sh`
+
+Install rules into another repo:
+
+```bash
+./scripts/install-cursor-rules.sh /absolute/path/to/target-project
+```
 
 ## Orbit Command Palette
 

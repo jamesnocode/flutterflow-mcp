@@ -1,25 +1,35 @@
 ---
-description: First-class widget CRUD for split-node and non-split page structures.
+description: First-class widget workflows for reliable query/edit operations.
 alwaysApply: true
 ---
 
-# Widgets CRUD
+# Widgets Commands
 
-Commands:
-- Create: `widget.create`
-- Read: `widgets.list`, `widget.get`
-- Update: `widget.set`
-- Delete: `widget.delete`
+Read commands:
+- Inventory: `widgets.list`
+- Search: `widgets.find`, `widgets.findText`
+- Text-focused inventory: `textfields.list`
+- Single read: `widget.get`
+- Batch read: `widget.getMany`
+
+Edit commands:
+- Create: `widget.create` / `widget.insert`
+- Update: `widget.set` / `widgets.updateMany`
+- Structure: `widget.wrap`, `widget.unwrap`, `widget.move`, `widget.reorder`, `widget.moveMany`
+- Delete: `widget.delete`, `widget.deleteSubtree`
 
 Required args:
 - Page selector: `nameOrId` or `pageId` or `fileKey`
 - Widget selector: `nodeId`
-- For create: `parentNodeId`, `type`
+- For create: `type` plus placement selector (`parentNodeId`, `beforeNodeId`, or `afterNodeId`)
 
-Safety:
-- In non-split pages, selectors must be scoped to the requested `nodeId` before key operations.
-- Never apply suffix-matched selectors at page root without node scoping.
+Performance/safety:
+- Prefer `widgets.list` filters (`type`, `include`) or `textfields.list` over N+1 `widget.get` loops.
+- Resolve exact `nodeId` before write operations.
+- In non-split pages, ensure key-path updates are node-scoped before set/delete.
 
 Text updates:
-- Prefer `props.text.textValue.inputValue`.
-- Mirror `props.text.textValue.mostRecentInputValue` when present.
+- Prefer `widget.set` with `text` for common text edits.
+- Use explicit key path only when required:
+  - `props.text.textValue.inputValue`
+  - mirror `props.text.textValue.mostRecentInputValue` when present

@@ -12,10 +12,20 @@ Default behavior:
 Controls:
 - `strictSnapshot:true` disables cross-snapshot fallback.
 - `includeDeleted:true` includes soft-deleted pages.
+- `snapshots.refresh` supports `fetchStrategy: auto|bulk|file`.
 
-When data looks wrong:
-1) Run `pages.list` without strict mode.
-2) Check warnings for stale/incomplete snapshot hints.
-3) Run `snapshots.refresh` and retry.
+When data looks wrong or stale:
+1) Run `snapshots.info` and inspect `refreshedAt` and counts.
+2) Run `pages.list` without strict mode to catch fallback warnings.
+3) Run `snapshots.refresh` with conservative pacing.
+4) Re-check `snapshots.info`.
+
+Recommended refresh defaults under throttling:
+- Incremental: `mode:"incremental", fetchStrategy:"auto", maxFetch:25, concurrency:1, sleepMs:250`
+- Severe 429: `mode:"incremental", fetchStrategy:"file", maxFetch:5, concurrency:1, sleepMs:1000`
+- Full sync attempt: `mode:"full", fetchStrategy:"bulk"`
+
+Authoritative state:
+- Treat snapshot as authoritative only when full refresh reports `authoritative:true` and `pruneApplied:true`.
 
 Do not conclude deletions from partial refreshes or 429-heavy runs.
