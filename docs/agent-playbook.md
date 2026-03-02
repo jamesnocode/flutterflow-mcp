@@ -45,6 +45,12 @@ Authoritative full attempt:
 {"cmd":"snapshots.refresh","args":{"mode":"full","fetchStrategy":"bulk","concurrency":1,"sleepMs":2000},"format":"json"}
 ```
 
+Chunked full fallback (reuses one file list across chunk passes):
+
+```json
+{"cmd":"snapshots.refresh","args":{"mode":"full","fetchStrategy":"file","chunkedFull":true,"maxFetch":5,"concurrency":1,"sleepMs":1000},"format":"json"}
+```
+
 Treat snapshot as authoritative only when refresh output reports `authoritative:true` and `pruneApplied:true`.
 
 ## 4) Apply safely under 429

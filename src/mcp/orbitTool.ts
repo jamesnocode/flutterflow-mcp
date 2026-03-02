@@ -1254,9 +1254,48 @@ interface RememberedSelection {
   updatedAt: string;
 }
 
+interface FullRefreshChunkSession {
+  sessionId: string;
+  snapshotId: string;
+  projectId: string;
+  remoteKeys: string[];
+  queue: string[];
+  fetchedCanonicalKeys: Set<string>;
+  versionInfo?: ProjectVersionInfo;
+  createdAt: string;
+  listedAt: string;
+  updatedAt: string;
+}
+
+type RefreshSnapshotResult = {
+  mode: "incremental" | "full";
+  fetchedCount: number;
+  attemptedFetchCount: number;
+  totalRemoteFiles: number;
+  strategyUsed: "bulk" | "file";
+  failedFetchCount: number;
+  partial: boolean;
+  pruneApplied: boolean;
+  authoritative: boolean;
+  versionInfo: unknown;
+  notes: string[];
+  warnings: string[];
+  chunkSession?: {
+    sessionId: string;
+    remainingFetchCount: number;
+    totalRemoteFiles: number;
+    listedAt: string;
+    createdAt: string;
+    updatedAt: string;
+    completed: boolean;
+    reused: boolean;
+  };
+};
+
 export class OrbitCommandPalette {
   private readonly clipboards = new Map<string, ClipboardEntry>();
   private readonly selectionBySnapshot = new Map<string, RememberedSelection>();
+  private readonly fullRefreshChunkSessions = new Map<string, FullRefreshChunkSession>();
   private lastSelection?: RememberedSelection;
 
   constructor(
@@ -1769,10 +1808,17 @@ export class OrbitCommandPalette {
                     concurrency: "optional fetch concurrency (1..16, default 1; slow-safe)",
                     sleepMs: "optional delay between file fetches in each worker, default 250ms",
                     listRetries: "optional retries for listPartitionedFileNames on 429 (0..6, default 2)",
-                    listRetryBaseMs: "optional base backoff for list retries, default 1500"
+                    listRetryBaseMs: "optional base backoff for list retries, default 1500",
+                    chunkedFull: "optional boolean; with mode=full+fetchStrategy=file, reuse a single list call across chunked runs",
+                    chunkSessionId: "optional session id to resume a chunked full refresh",
+                    resetChunkSession: "optional boolean; reset existing chunk session before run"
                   },
                   examples: [
-                    { cmd: "snapshots.refresh", args: { mode: "incremental", maxFetch: 25, concurrency: 1, sleepMs: 250 } }
+                    { cmd: "snapshots.refresh", args: { mode: "incremental", maxFetch: 25, concurrency: 1, sleepMs: 250 } },
+                    {
+                      cmd: "snapshots.refresh",
+                      args: { mode: "full", fetchStrategy: "file", chunkedFull: true, maxFetch: 10, concurrency: 1, sleepMs: 1000 }
+                    }
                   ]
                 },
                 "snapshots.refreshSlow": {
@@ -2051,20 +2097,35 @@ export class OrbitCommandPalette {
           const modeRaw = strArg(args, "mode", false) || "incremental";
           const mode = modeRaw === "full" ? "full" : "incremental";
           const fetchStrategy = parseFetchStrategy(args);
+          const chunkedFull = boolArg(args, "chunkedFull", false) || boolArg(args, "chunked", false);
+          const chunkSessionId = strArg(args, "chunkSessionId", false) || strArg(args, "sessionId", false);
+          const resetChunkSession = boolArg(args, "resetChunkSession", false) || boolArg(args, "resetSession", false);
           const maxFetchRaw = numArg(args, "maxFetch", 0);
           const concurrencyRaw = numArg(args, "concurrency", 1);
           const sleepMsRaw = numArg(args, "sleepMs", 250);
           const listRetriesRaw = numArg(args, "listRetries", 2);
           const listRetryBaseMsRaw = numArg(args, "listRetryBaseMs", 1500);
-          const result = await this.refreshSnapshotOnce(snapshotId, {
-            mode,
-            fetchStrategy,
-            maxFetch: maxFetchRaw > 0 ? clampInt(maxFetchRaw, 1, 2000) : undefined,
-            concurrency: clampInt(concurrencyRaw, 1, 16),
-            sleepMs: clampInt(sleepMsRaw, 0, 60_000),
-            listRetries: clampInt(listRetriesRaw, 0, 6),
-            listRetryBaseMs: clampInt(listRetryBaseMsRaw, 250, 60_000)
-          });
+          const useChunkedFull =
+            mode === "full" && fetchStrategy === "file" && (chunkedFull || Boolean(chunkSessionId) || resetChunkSession);
+          const result = useChunkedFull
+            ? await this.refreshSnapshotFullChunked(snapshotId, {
+                chunkSessionId,
+                resetChunkSession,
+                maxFetch: maxFetchRaw > 0 ? clampInt(maxFetchRaw, 1, 2000) : 25,
+                concurrency: clampInt(concurrencyRaw, 1, 16),
+                sleepMs: clampInt(sleepMsRaw, 0, 60_000),
+                listRetries: clampInt(listRetriesRaw, 0, 6),
+                listRetryBaseMs: clampInt(listRetryBaseMsRaw, 250, 60_000)
+              })
+            : await this.refreshSnapshotOnce(snapshotId, {
+                mode,
+                fetchStrategy,
+                maxFetch: maxFetchRaw > 0 ? clampInt(maxFetchRaw, 1, 2000) : undefined,
+                concurrency: clampInt(concurrencyRaw, 1, 16),
+                sleepMs: clampInt(sleepMsRaw, 0, 60_000),
+                listRetries: clampInt(listRetriesRaw, 0, 6),
+                listRetryBaseMs: clampInt(listRetryBaseMsRaw, 250, 60_000)
+              });
 
           return this.ok(
             parsed.cmd,
@@ -2080,7 +2141,8 @@ export class OrbitCommandPalette {
               pruneApplied: result.pruneApplied,
               authoritative: result.authoritative,
               versionInfo: result.versionInfo,
-              notes: result.notes
+              notes: result.notes,
+              chunkSession: result.chunkSession
             },
             result.warnings
           );
@@ -8795,6 +8857,207 @@ export class OrbitCommandPalette {
     }
   }
 
+  private findChunkSessionForSnapshot(snapshotId: string): FullRefreshChunkSession | undefined {
+    for (const session of this.fullRefreshChunkSessions.values()) {
+      if (session.snapshotId === snapshotId) {
+        return session;
+      }
+    }
+    return undefined;
+  }
+
+  private clearChunkSessionsForSnapshot(snapshotId: string): void {
+    for (const [sessionId, session] of this.fullRefreshChunkSessions.entries()) {
+      if (session.snapshotId === snapshotId) {
+        this.fullRefreshChunkSessions.delete(sessionId);
+      }
+    }
+  }
+
+  private async refreshSnapshotFullChunked(
+    snapshotId: string,
+    options: {
+      chunkSessionId?: string;
+      resetChunkSession: boolean;
+      maxFetch: number;
+      concurrency: number;
+      sleepMs: number;
+      listRetries: number;
+      listRetryBaseMs: number;
+    }
+  ): Promise<RefreshSnapshotResult> {
+    const snapshot = this.requireSnapshot(snapshotId);
+    const warnings: string[] = [];
+    const notes: string[] = [];
+
+    if (options.resetChunkSession) {
+      if (options.chunkSessionId) {
+        this.fullRefreshChunkSessions.delete(options.chunkSessionId);
+      }
+      this.clearChunkSessionsForSnapshot(snapshotId);
+      notes.push("Reset existing chunked full refresh session state.");
+    }
+
+    let session: FullRefreshChunkSession | undefined;
+    let reusedSession = false;
+
+    if (options.chunkSessionId) {
+      session = this.fullRefreshChunkSessions.get(options.chunkSessionId);
+      if (!session && !options.resetChunkSession) {
+        throw new Error(`Chunk session not found: ${options.chunkSessionId}. Start a new run with chunkedFull:true.`);
+      }
+      reusedSession = Boolean(session);
+    } else {
+      session = this.findChunkSessionForSnapshot(snapshotId);
+      if (session) {
+        reusedSession = true;
+      }
+    }
+
+    if (session && (session.snapshotId !== snapshotId || session.projectId !== snapshot.projectId)) {
+      throw new Error(
+        `Chunk session ${session.sessionId} does not match snapshot ${snapshotId}. Start a new chunked session for this snapshot.`
+      );
+    }
+
+    if (!session) {
+      const listed = await this.listPartitionedFileNamesWithBackoff(
+        snapshot.projectId,
+        options.listRetries,
+        options.listRetryBaseMs,
+        warnings
+      );
+      const uniqueKeys: string[] = [];
+      const seenCanonicalKeys = new Set<string>();
+      for (const entry of listed.files) {
+        const canonical = this.canonicalFileKey(entry.fileKey);
+        if (seenCanonicalKeys.has(canonical)) {
+          continue;
+        }
+        seenCanonicalKeys.add(canonical);
+        uniqueKeys.push(entry.fileKey);
+      }
+      const now = new Date().toISOString();
+      const sessionId = options.chunkSessionId || orbitId("frs");
+      session = {
+        sessionId,
+        snapshotId,
+        projectId: snapshot.projectId,
+        remoteKeys: uniqueKeys,
+        queue: [...uniqueKeys],
+        fetchedCanonicalKeys: new Set<string>(),
+        versionInfo: listed.versionInfo,
+        createdAt: now,
+        listedAt: now,
+        updatedAt: now
+      };
+      this.fullRefreshChunkSessions.set(sessionId, session);
+      notes.push(`Created chunked full refresh session ${sessionId} with ${uniqueKeys.length} files.`);
+    } else {
+      notes.push(`Reusing chunked full refresh session ${session.sessionId}.`);
+    }
+
+    const batchSize = clampInt(options.maxFetch, 1, 2000);
+    const fetchKeys = session.queue.slice(0, batchSize);
+    session.queue = session.queue.slice(fetchKeys.length);
+
+    const attemptedFetchCount = fetchKeys.length;
+    let failedFetchCount = 0;
+    const failedKeys: string[] = [];
+    const fetchedRows = await mapLimit(fetchKeys, options.concurrency, async (fileKey) => {
+      if (options.sleepMs > 0) {
+        await waitMs(options.sleepMs);
+      }
+      try {
+        const yaml = await this.fetchFileWithBackoff(
+          snapshot.projectId,
+          fileKey,
+          options.listRetries,
+          options.listRetryBaseMs,
+          warnings
+        );
+        return { fileKey, yaml, sha256: sha256(yaml) };
+      } catch (error) {
+        failedKeys.push(fileKey);
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`Failed to refresh '${fileKey}' in chunk session ${session.sessionId}: ${message}`);
+        return undefined;
+      }
+    });
+
+    const fetched = fetchedRows.filter((row): row is { fileKey: string; yaml: string; sha256: string } => Boolean(row));
+    failedFetchCount = attemptedFetchCount - fetched.length;
+    if (failedKeys.length > 0) {
+      session.queue.push(...failedKeys);
+    }
+
+    for (const row of fetched) {
+      session.fetchedCanonicalKeys.add(this.canonicalFileKey(row.fileKey));
+    }
+
+    if (fetched.length > 0) {
+      this.snapshotRepo.upsertFiles(snapshotId, fetched);
+      if (session.versionInfo) {
+        this.snapshotRepo.setVersionInfo(snapshotId, session.versionInfo);
+      }
+      this.snapshotRepo.touchSnapshot(snapshotId);
+      await this.reindex(snapshotId);
+    }
+
+    const remoteCanonicalKeys = new Set(session.remoteKeys.map((key) => this.canonicalFileKey(key)));
+    const completed = session.queue.length === 0;
+    const hasAllRemoteKeys = [...remoteCanonicalKeys].every((key) => session.fetchedCanonicalKeys.has(key));
+    const canPruneMissing = completed && hasAllRemoteKeys;
+    let pruneApplied = false;
+    if (canPruneMissing) {
+      this.snapshotRepo.deleteMissingFiles(snapshotId, session.remoteKeys);
+      this.snapshotRepo.touchSnapshot(snapshotId);
+      await this.reindex(snapshotId);
+      pruneApplied = true;
+      this.fullRefreshChunkSessions.delete(session.sessionId);
+      notes.push(`Chunked full refresh session ${session.sessionId} completed and pruning was applied.`);
+    } else {
+      warnings.push(
+        `Chunked full refresh in progress: ${session.queue.length} file(s) remaining in session ${session.sessionId}.`
+      );
+    }
+
+    session.updatedAt = new Date().toISOString();
+    if (!pruneApplied) {
+      this.fullRefreshChunkSessions.set(session.sessionId, session);
+    }
+
+    const authoritative = canPruneMissing;
+    if (!authoritative) {
+      warnings.push("Snapshot refresh is not authoritative yet due to in-progress chunked full refresh coverage.");
+    }
+
+    return {
+      mode: "full",
+      fetchedCount: fetched.length,
+      attemptedFetchCount,
+      totalRemoteFiles: session.remoteKeys.length,
+      strategyUsed: "file",
+      failedFetchCount,
+      partial: !authoritative,
+      pruneApplied,
+      authoritative,
+      versionInfo: session.versionInfo,
+      notes,
+      warnings,
+      chunkSession: {
+        sessionId: session.sessionId,
+        remainingFetchCount: session.queue.length,
+        totalRemoteFiles: session.remoteKeys.length,
+        listedAt: session.listedAt,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        completed: authoritative,
+        reused: reusedSession
+      }
+    };
+  }
+
   private async refreshSnapshotOnce(
     snapshotId: string,
     options: {
@@ -8806,20 +9069,10 @@ export class OrbitCommandPalette {
       listRetries: number;
       listRetryBaseMs: number;
     }
-  ): Promise<{
-    mode: "incremental" | "full";
-    fetchedCount: number;
-    attemptedFetchCount: number;
-    totalRemoteFiles: number;
-    strategyUsed: "bulk" | "file";
-    failedFetchCount: number;
-    partial: boolean;
-    pruneApplied: boolean;
-    authoritative: boolean;
-    versionInfo: unknown;
-    notes: string[];
-    warnings: string[];
-  }> {
+  ): Promise<RefreshSnapshotResult> {
+    if (options.mode === "full") {
+      this.clearChunkSessionsForSnapshot(snapshotId);
+    }
     const snapshot = this.requireSnapshot(snapshotId);
     const warnings: string[] = [];
     const listed = await this.listPartitionedFileNamesWithBackoff(

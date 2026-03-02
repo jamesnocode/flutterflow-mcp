@@ -256,6 +256,7 @@ When FlutterFlow returns `versionInfo` (`partitionerVersion`, `projectSchemaFing
 If FlutterFlow is rate-limiting refresh (`429`), prefer budgeted crawl mode:
 - `orbit({ cmd:"snapshots.refreshSlow", args:{ passes:4, pauseMs:15000, maxFetch:25, concurrency:1, sleepMs:250 } })`
 - `orbit({ cmd:"snapshots.refresh", args:{ mode:"full", fetchStrategy:"bulk" } })` for low-request full sync attempts
+- `orbit({ cmd:"snapshots.refresh", args:{ mode:"full", fetchStrategy:"file", chunkedFull:true, maxFetch:5, concurrency:1, sleepMs:1000 } })` for chunked full sync without relisting each pass
 
 ## Safe Editing Workflow
 

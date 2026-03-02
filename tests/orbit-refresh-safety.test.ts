@@ -178,6 +178,167 @@ describe("orbit snapshots.refresh safety", () => {
     db.close();
   });
 
+  it("supports chunked full refresh without relisting every pass", async () => {
+    const remoteFiles: Record<string, string> = {
+      "page/id-Scaffold_1.yaml": "pageName: One\n",
+      "page/id-Scaffold_2.yaml": "pageName: Two\n",
+      "page/id-Scaffold_3.yaml": "pageName: Three\n"
+    };
+    let listCalls = 0;
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }));
+      },
+      async fetchFile(_projectId, fileKey) {
+        return remoteFiles[fileKey] ?? "";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        listCalls += 1;
+        return {
+          files: Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }))
+        };
+      },
+      async fetchProjectYamls() {
+        return { files: {} };
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-full-chunked");
+
+    const first = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: { mode: "full", fetchStrategy: "file", chunkedFull: true, maxFetch: 1, concurrency: 1, sleepMs: 0 }
+    });
+    expect(first.ok).toBe(true);
+    const firstData = first.data as {
+      authoritative: boolean;
+      chunkSession?: { sessionId: string; remainingFetchCount: number; completed: boolean };
+    };
+    expect(firstData.authoritative).toBe(false);
+    expect(firstData.chunkSession?.remainingFetchCount).toBe(2);
+
+    const second = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: {
+        mode: "full",
+        fetchStrategy: "file",
+        chunkSessionId: firstData.chunkSession?.sessionId,
+        maxFetch: 1,
+        concurrency: 1,
+        sleepMs: 0
+      }
+    });
+    expect(second.ok).toBe(true);
+    const secondData = second.data as { chunkSession?: { remainingFetchCount: number } };
+    expect(secondData.chunkSession?.remainingFetchCount).toBe(1);
+
+    const third = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: {
+        mode: "full",
+        fetchStrategy: "file",
+        chunkSessionId: firstData.chunkSession?.sessionId,
+        maxFetch: 1,
+        concurrency: 1,
+        sleepMs: 0
+      }
+    });
+    expect(third.ok).toBe(true);
+    const thirdData = third.data as {
+      authoritative: boolean;
+      pruneApplied: boolean;
+      chunkSession?: { remainingFetchCount: number; completed: boolean };
+    };
+    expect(thirdData.authoritative).toBe(true);
+    expect(thirdData.pruneApplied).toBe(true);
+    expect(thirdData.chunkSession?.completed).toBe(true);
+    expect(thirdData.chunkSession?.remainingFetchCount).toBe(0);
+    expect(snapshotRepo.countFiles(snapshot.snapshotId)).toBe(3);
+    expect(listCalls).toBe(1);
+    db.close();
+  });
+
+  it("can reset chunked full refresh session and relist", async () => {
+    const remoteFiles: Record<string, string> = {
+      "page/id-Scaffold_1.yaml": "pageName: One\n",
+      "page/id-Scaffold_2.yaml": "pageName: Two\n"
+    };
+    let listCalls = 0;
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }));
+      },
+      async fetchFile(_projectId, fileKey) {
+        return remoteFiles[fileKey] ?? "";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        listCalls += 1;
+        return {
+          files: Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }))
+        };
+      },
+      async fetchProjectYamls() {
+        return { files: {} };
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-full-chunked-reset");
+
+    const first = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: { mode: "full", fetchStrategy: "file", chunkedFull: true, maxFetch: 1, concurrency: 1, sleepMs: 0 }
+    });
+    expect(first.ok).toBe(true);
+    expect(listCalls).toBe(1);
+
+    const second = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: {
+        mode: "full",
+        fetchStrategy: "file",
+        chunkedFull: true,
+        resetChunkSession: true,
+        maxFetch: 1,
+        concurrency: 1,
+        sleepMs: 0
+      }
+    });
+    expect(second.ok).toBe(true);
+    expect(listCalls).toBe(2);
+    db.close();
+  });
+
   it("retries listPartitionedFileNames on 429 before failing refresh", async () => {
     const remoteFiles: Record<string, string> = {
       "page/id-Scaffold_1.yaml": "pageName: One\n"
