@@ -35,6 +35,7 @@ export type ParsedIntent =
   | { kind: "page.remove"; nameOrId?: string }
   | { kind: "page.clone"; nameOrId?: string; newName?: string }
   | { kind: "snapshots.ensureFresh"; staleMinutes?: number; force?: boolean }
+  | { kind: "snapshots.refresh"; mode?: "incremental" | "full" }
   | { kind: "changeset.rollback"; changesetId?: string; latestApplied?: boolean }
   | { kind: "unknown" };
 
@@ -331,6 +332,19 @@ export function parseIntentText(input: string): ParsedIntent {
       kind: "snapshots.ensureFresh",
       staleMinutes: Number.isFinite(staleMinutes) ? staleMinutes : undefined,
       force: /force/i.test(text)
+    };
+  }
+
+  match =
+    text.match(
+      /^(?:refresh|sync|update)\s+(?:the\s+)?(?:flutterflow\s+)?snapshot(?:\s+from\s+flutterflow)?(?:\s+(full|incremental))?(?:\s+now)?$/i
+    ) ??
+    text.match(/^(full|incremental)\s+snapshot\s+refresh(?:\s+from\s+flutterflow)?$/i);
+  if (match) {
+    const rawMode = (match[1] || "").toLowerCase();
+    return {
+      kind: "snapshots.refresh",
+      mode: rawMode === "full" ? "full" : rawMode === "incremental" ? "incremental" : undefined
     };
   }
 

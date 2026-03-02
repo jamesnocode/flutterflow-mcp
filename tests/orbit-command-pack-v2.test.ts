@@ -568,6 +568,28 @@ describe("next command pack", () => {
     expect(scaffoldArgs?.recipe).toBe("settings.basic");
     expect(scaffoldArgs?.name).toBe("preferences");
 
+    const refreshIntent = await orbit.run({
+      cmd: "intent.run",
+      snapshot: snapshot.snapshotId,
+      args: { text: "refresh snapshot from flutterflow now" }
+    });
+    expect(refreshIntent.ok).toBe(true);
+    expect((refreshIntent.data as { mappedCommand?: string }).mappedCommand).toBe("snapshots.refresh");
+    const refreshArgs = (refreshIntent.data as { mappedArgs?: { mode?: string; fetchStrategy?: string } }).mappedArgs;
+    expect(refreshArgs?.mode).toBe("incremental");
+    expect(refreshArgs?.fetchStrategy).toBe("auto");
+
+    const fullRefreshIntent = await orbit.run({
+      cmd: "intent.run",
+      snapshot: snapshot.snapshotId,
+      args: { text: "full snapshot refresh" }
+    });
+    expect(fullRefreshIntent.ok).toBe(true);
+    const fullRefreshArgs = (fullRefreshIntent.data as { mappedArgs?: { mode?: string; fetchStrategy?: string } }).mappedArgs;
+    expect((fullRefreshIntent.data as { mappedCommand?: string }).mappedCommand).toBe("snapshots.refresh");
+    expect(fullRefreshArgs?.mode).toBe("full");
+    expect(fullRefreshArgs?.fetchStrategy).toBe("bulk");
+
     db.close();
   });
 

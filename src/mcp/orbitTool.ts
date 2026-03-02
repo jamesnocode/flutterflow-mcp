@@ -7376,6 +7376,18 @@ export class OrbitCommandPalette {
               staleMinutes: intent.staleMinutes,
               force: intent.force ?? false
             };
+          } else if (intent.kind === "snapshots.refresh") {
+            const mode = intent.mode ?? "incremental";
+            mappedCommand = "snapshots.refresh";
+            mappedArgs = {
+              mode,
+              fetchStrategy: mode === "full" ? "bulk" : "auto",
+              maxFetch: mode === "full" ? 0 : 25,
+              concurrency: 1,
+              sleepMs: mode === "full" ? 250 : 250,
+              listRetries: 2,
+              listRetryBaseMs: 1500
+            };
           } else if (intent.kind === "changeset.rollback") {
             mappedCommand = "changeset.rollback";
             mappedArgs = {
@@ -7452,7 +7464,12 @@ export class OrbitCommandPalette {
               }
             }
 
-            if (!mappedArgs.nameOrId && !["widgets.findText", "snapshots.ensureFresh", "changeset.rollback", "page.scaffold"].includes(mappedCommand)) {
+            if (
+              !mappedArgs.nameOrId &&
+              !["widgets.findText", "snapshots.ensureFresh", "snapshots.refresh", "changeset.rollback", "page.scaffold"].includes(
+                mappedCommand
+              )
+            ) {
               clarify = {
                 message: "Missing page context. Provide page name/id or include selection.pageId. Example: intent.run { text:'list widgets on login' }."
               };
