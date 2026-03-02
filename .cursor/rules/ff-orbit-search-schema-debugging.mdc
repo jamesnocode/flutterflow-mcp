@@ -1,0 +1,20 @@
+---
+description: Search/schema/debug workflow for resolving unknown paths and command failures.
+alwaysApply: true
+---
+
+# Search, Schema, Debugging
+
+When command args/paths are unclear:
+1) `help`
+2) `schema.search` / `schema.read` / `schema.snippet`
+3) `search` in snapshot content for exact keys/values
+4) `widgets.list` + `widget.get` to inspect concrete node shape
+
+For page/widget not found:
+- Resolve via `pages.list` first.
+- Use returned `pageId`/`nodeId` explicitly.
+
+For transient API issues (404/429/Unknown error):
+- Prefer local snapshot fallback for reads.
+- Record warning context and avoid destructive assumptions.

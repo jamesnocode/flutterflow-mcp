@@ -1,0 +1,236 @@
+import { describe, expect, it } from "vitest";
+import { openOrbitDb } from "../src/store/db.js";
+import { SnapshotRepo } from "../src/store/snapshotRepo.js";
+import { IndexRepo } from "../src/store/indexRepo.js";
+import { OrbitCommandPalette } from "../src/mcp/orbitTool.js";
+import { ChangesetService } from "../src/edits/changesets.js";
+import { PolicyEngine } from "../src/policy/engine.js";
+import type { FlutterFlowAdapter } from "../src/ff/adapter.js";
+import { FlutterFlowApiError } from "../src/ff/errors.js";
+import { sha256 } from "../src/util/hash.js";
+
+function buildOrbit(adapter: FlutterFlowAdapter) {
+  const db = openOrbitDb({ dbPath: ":memory:" });
+  const snapshotRepo = new SnapshotRepo(db);
+  const indexRepo = new IndexRepo(db);
+  const policy = new PolicyEngine();
+  const changesets = new ChangesetService(db, snapshotRepo, policy, adapter, async () => {});
+  const orbit = new OrbitCommandPalette(adapter, snapshotRepo, indexRepo, changesets, policy);
+  return { db, snapshotRepo, orbit };
+}
+
+describe("orbit snapshots.refresh safety", () => {
+  it("does not prune snapshot files after partial full refresh failures", async () => {
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return ["page/id-Scaffold_1", "page/id-Scaffold_2"];
+      },
+      async fetchFile(_projectId, fileKey) {
+        if (fileKey === "page/id-Scaffold_2") {
+          throw new Error("429");
+        }
+        return "pageName: New One\n";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        return {
+          files: [{ fileKey: "page/id-Scaffold_1" }, { fileKey: "page/id-Scaffold_2" }]
+        };
+      },
+      async fetchProjectYamls() {
+        return { files: {} };
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-safe");
+    const yaml1 = "pageName: Old One\n";
+    const yaml2 = "pageName: Old Two\n";
+    snapshotRepo.upsertFiles(snapshot.snapshotId, [
+      { fileKey: "page/id-Scaffold_1.yaml", yaml: yaml1, sha256: sha256(yaml1) },
+      { fileKey: "page/id-Scaffold_2.yaml", yaml: yaml2, sha256: sha256(yaml2) }
+    ]);
+
+    const result = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: { mode: "full" }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes("Skipped pruning missing files"))).toBe(true);
+    const files = snapshotRepo.listFiles(snapshot.snapshotId, "page/", 10_000).map((file) => file.fileKey);
+    expect(files).toContain("page/id-Scaffold_2.yaml");
+    expect(files).toContain("page/id-Scaffold_1.yaml");
+    db.close();
+  });
+
+  it("respects maxFetch budget for snapshots.refresh", async () => {
+    const remoteFiles: Record<string, string> = {
+      "page/id-Scaffold_1.yaml": "pageName: One\n",
+      "page/id-Scaffold_2.yaml": "pageName: Two\n",
+      "page/id-Scaffold_3.yaml": "pageName: Three\n"
+    };
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }));
+      },
+      async fetchFile(_projectId, fileKey) {
+        return remoteFiles[fileKey] ?? "";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        return {
+          files: Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }))
+        };
+      },
+      async fetchProjectYamls() {
+        return { files: {} };
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-budgeted");
+    const result = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: { mode: "incremental", maxFetch: 1, concurrency: 1 }
+    });
+
+    expect(result.ok).toBe(true);
+    const data = result.data as { attemptedFetchCount: number; fetchedCount: number };
+    expect(data.attemptedFetchCount).toBe(1);
+    expect(data.fetchedCount).toBe(1);
+    expect(snapshotRepo.countFiles(snapshot.snapshotId)).toBe(1);
+    db.close();
+  });
+
+  it("snapshots.refreshSlow crawls in incremental batches", async () => {
+    const remoteFiles: Record<string, string> = {
+      "page/id-Scaffold_1.yaml": "pageName: One\n",
+      "page/id-Scaffold_2.yaml": "pageName: Two\n",
+      "page/id-Scaffold_3.yaml": "pageName: Three\n"
+    };
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }));
+      },
+      async fetchFile(_projectId, fileKey) {
+        return remoteFiles[fileKey] ?? "";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        return {
+          files: Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }))
+        };
+      },
+      async fetchProjectYamls() {
+        return { files: {} };
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-slow");
+    const result = await orbit.run({
+      cmd: "snapshots.refreshSlow",
+      snapshot: snapshot.snapshotId,
+      args: { passes: 5, pauseMs: 0, maxFetch: 1, concurrency: 1, sleepMs: 0 }
+    });
+
+    expect(result.ok).toBe(true);
+    const data = result.data as { passesCompleted: number; totalFetchedCount: number };
+    expect(data.totalFetchedCount).toBe(3);
+    expect(data.passesCompleted).toBeGreaterThan(1);
+    expect(snapshotRepo.countFiles(snapshot.snapshotId)).toBe(3);
+    db.close();
+  });
+
+  it("retries listPartitionedFileNames on 429 before failing refresh", async () => {
+    const remoteFiles: Record<string, string> = {
+      "page/id-Scaffold_1.yaml": "pageName: One\n"
+    };
+    let listCalls = 0;
+    const adapter: FlutterFlowAdapter = {
+      async listProjects() {
+        return [];
+      },
+      async listFileKeys() {
+        return Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }));
+      },
+      async fetchFile(_projectId, fileKey) {
+        return remoteFiles[fileKey] ?? "";
+      },
+      async pushFiles() {
+        return { ok: true };
+      },
+      async remoteValidate() {
+        return { ok: true };
+      },
+      async listPartitionedFileNames() {
+        listCalls += 1;
+        if (listCalls === 1) {
+          throw new FlutterFlowApiError("rate limited", 429, "", {
+            method: "GET",
+            url: "https://api.flutterflow.io/v2/listPartitionedFileNames",
+            retryAfter: "0"
+          });
+        }
+        return {
+          files: Object.keys(remoteFiles).map((fileKey) => ({ fileKey, hash: sha256(remoteFiles[fileKey] ?? "") }))
+        };
+      },
+      async fetchProjectYamls() {
+        return { files: {} };
+      },
+      async validateProjectYaml() {
+        return { ok: true };
+      }
+    };
+
+    const { db, snapshotRepo, orbit } = buildOrbit(adapter);
+    const snapshot = snapshotRepo.createSnapshot("proj_1", "refresh-retry");
+    const result = await orbit.run({
+      cmd: "snapshots.refresh",
+      snapshot: snapshot.snapshotId,
+      args: { mode: "incremental", listRetries: 1, listRetryBaseMs: 1 }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(listCalls).toBe(2);
+    expect(result.warnings.some((warning) => warning.includes("Rate limited on listPartitionedFileNames"))).toBe(true);
+    db.close();
+  });
+});

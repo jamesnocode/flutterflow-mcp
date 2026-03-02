@@ -1,0 +1,21 @@
+---
+description: Changeset lifecycle and reliable apply behavior.
+alwaysApply: true
+---
+
+# Changesets
+
+Use this order for writes:
+1) Create/extend changeset
+2) `changeset.preview`
+3) `changeset.validate`
+4) `changeset.apply` with `confirm:true`
+
+Apply behavior notes:
+- Respect `applyResult.applied` as final truth.
+- If blocked, surface `reason` and next step.
+- Use `orbit_export_changeset` for manual fallback payloads.
+
+Remote validation:
+- Default to remote validation when stable.
+- Allow `remoteValidate:false` only when explicitly needed and documented in output.

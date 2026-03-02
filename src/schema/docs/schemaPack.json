@@ -1,0 +1,163 @@
+{
+  "docs": [
+    {
+      "id": "widget/container-layout",
+      "title": "Container Layout Backbone",
+      "tags": ["widget", "layout", "responsive"],
+      "body": "Use a root Column for vertical flow, then wrap section blocks in Container widgets with explicit padding and alignment. Keep width constraints near section boundaries to avoid surprise overflow on tablet breakpoints."
+    },
+    {
+      "id": "widget/list-performance",
+      "title": "Large List Performance",
+      "tags": ["widget", "list", "performance"],
+      "body": "Prefer lazily built list widgets and keep item trees shallow. Avoid nested scroll views, and compute expensive formatting before rendering to reduce rebuild churn."
+    },
+    {
+      "id": "widget/conditional-display",
+      "title": "Conditional Display Patterns",
+      "tags": ["widget", "visibility", "state"],
+      "body": "Attach conditions to the smallest subtree possible. Keep fallback states explicit, and ensure at least one branch produces semantic content for empty and error states."
+    },
+    {
+      "id": "action/navigation-guard",
+      "title": "Navigation Guard Action",
+      "tags": ["action", "navigation", "safety"],
+      "body": "Before navigating, validate required state keys and auth context. Route to a recovery page when guard checks fail, and log the failed predicate for diagnostics."
+    },
+    {
+      "id": "action/multi-step-submit",
+      "title": "Multi-step Submit Action",
+      "tags": ["action", "api", "error-handling"],
+      "body": "Model submit flows as Validate -> Loading State -> API Call -> Success/Error branch. Always reset loading state on every exit path."
+    },
+    {
+      "id": "state/appstate-naming",
+      "title": "App State Naming Conventions",
+      "tags": ["state", "naming", "maintainability"],
+      "body": "Use verb-free names for values (selectedProjectId) and verb-first names for booleans (isSyncing). Co-locate fields that change together to simplify update actions."
+    },
+    {
+      "id": "state/local-vs-global",
+      "title": "Local vs Global State",
+      "tags": ["state", "architecture"],
+      "body": "Keep transient UI state local to a page/component. Promote only cross-route, durable, or auth-coupled values to app state."
+    },
+    {
+      "id": "binding/form-validation",
+      "title": "Form Binding and Validation",
+      "tags": ["binding", "forms", "validation"],
+      "body": "Bind input values to state with clear source-of-truth semantics. Validation messages should map one-to-one with fields and run before side effects."
+    },
+    {
+      "id": "theme/color-scale",
+      "title": "Theme Color Scale",
+      "tags": ["theme", "design", "color"],
+      "body": "Define base, contrast, and muted tones as a scale rather than ad hoc colors. Use semantic aliases (success, warning, danger) to decouple UI meaning from raw values."
+    },
+    {
+      "id": "theme/typography-rhythm",
+      "title": "Typography Rhythm",
+      "tags": ["theme", "typography", "design"],
+      "body": "Limit body text to one default size and one compact size. Reserve larger variants for hierarchy anchors such as page headers and dialog titles."
+    },
+    {
+      "id": "integration/api-retry",
+      "title": "API Retry and Backoff",
+      "tags": ["integration", "api", "resilience"],
+      "body": "Retry only idempotent calls with jittered backoff. Surface retry state to users after the first retry so failures are visible and actionable."
+    },
+    {
+      "id": "integration/auth-refresh",
+      "title": "Auth Refresh Handling",
+      "tags": ["integration", "auth", "token"],
+      "body": "When auth tokens expire, pause dependent actions, refresh credentials, and replay queued requests once. If refresh fails, clear secure state and redirect to login."
+    },
+    {
+      "id": "safety/read-only-zones",
+      "title": "Read-only Zones",
+      "tags": ["safety", "policy", "edits"],
+      "body": "Treat custom code folders and unlocked runtime entry points as read-only during automated edits. Provide manual payloads instead of direct mutation for those areas."
+    },
+    {
+      "id": "safety/changeset-review",
+      "title": "Changeset Review Checklist",
+      "tags": ["safety", "changeset", "review"],
+      "body": "Review file count, changed line volume, and policy scope before apply. Reject broad edits that combine unrelated intents or cross forbidden boundaries."
+    },
+    {
+      "id": "routing/deep-links",
+      "title": "Deep Link Route Mapping",
+      "tags": ["routing", "navigation", "deep-link"],
+      "body": "Keep a single route map source and normalize path parameters. Every deep link should land on a valid state with deterministic fallback behavior."
+    },
+    {
+      "id": "platform/config-bundle",
+      "title": "Platform Config Bundling",
+      "tags": ["platform", "policy", "android", "ios"],
+      "body": "Platform configuration updates should be bundled as one apply operation so dependent files stay in sync. Partial platform edits are high risk and should be blocked by policy."
+    }
+  ],
+  "snippets": [
+    {
+      "id": "snippet/action-guarded-nav",
+      "title": "Guarded Navigate Action",
+      "tags": ["action", "navigation", "guard"],
+      "code": "actions:\n  - type: conditional\n    condition: appState.userId != null\n    then:\n      - type: navigate\n        targetPage: Dashboard\n    else:\n      - type: navigate\n        targetPage: SignIn",
+      "notes": "Template guard flow for auth-gated routes."
+    },
+    {
+      "id": "snippet/widget-empty-state",
+      "title": "List Empty State",
+      "tags": ["widget", "list", "empty-state"],
+      "code": "children:\n  - type: conditional\n    condition: items.length == 0\n    then:\n      type: text\n      value: No items yet\n    else:\n      type: listView\n      itemSource: items"
+    },
+    {
+      "id": "snippet/state-reset-on-submit",
+      "title": "Submit Reset Pattern",
+      "tags": ["state", "action", "submit"],
+      "code": "actions:\n  - type: setState\n    path: local.isLoading\n    value: true\n  - type: apiCall\n    key: createOrder\n  - type: setState\n    path: local.isLoading\n    value: false"
+    },
+    {
+      "id": "snippet/theme-semantic-colors",
+      "title": "Semantic Theme Tokens",
+      "tags": ["theme", "color"],
+      "code": "theme:\n  colors:\n    success: '#1f8f5f'\n    warning: '#ad7a00'\n    danger: '#bf1d2e'\n    mutedText: '#606a73'"
+    },
+    {
+      "id": "snippet/component-slot",
+      "title": "Component Slot Usage",
+      "tags": ["component", "composition"],
+      "code": "component:\n  name: CardShell\n  slots:\n    - header\n    - body\n    - footer"
+    },
+    {
+      "id": "snippet/platform-bundle-intent",
+      "title": "Platform Bundle Intent",
+      "tags": ["platform", "policy", "changeset"],
+      "code": "changeset:\n  title: Update Android/iOS identifiers\n  intent: Keep platform identifiers aligned across Android and iOS configs"
+    },
+    {
+      "id": "snippet/api-safe-retry",
+      "title": "Safe Retry Action",
+      "tags": ["api", "retry"],
+      "code": "actions:\n  - type: retry\n    maxAttempts: 3\n    backoffMs: 500\n    jitter: true"
+    },
+    {
+      "id": "snippet/auth-expired-handler",
+      "title": "Expired Token Handler",
+      "tags": ["auth", "api", "error"],
+      "code": "actions:\n  - type: conditional\n    condition: api.error.code == 401\n    then:\n      - type: navigate\n        targetPage: SignIn"
+    },
+    {
+      "id": "snippet/page-section-wrap",
+      "title": "Section Wrapper",
+      "tags": ["layout", "page", "responsive"],
+      "code": "widget:\n  type: container\n  constraints:\n    maxWidth: 960\n  padding:\n    all: 16"
+    },
+    {
+      "id": "snippet/route-map",
+      "title": "Route Map Entry",
+      "tags": ["route", "navigation"],
+      "code": "routes:\n  profile:\n    path: /profile/:id\n    page: ProfilePage"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+---
+description: First-class page CRUD usage patterns and caveats.
+alwaysApply: true
+---
+
+# Pages CRUD
+
+Commands:
+- Create: `page.create`
+- Read: `pages.list`, `page.get`
+- Update: `page.update`
+- Delete: `page.delete`
+
+Important:
+- `page.delete` is soft-delete in this integration (YAML marker), not hard remote file deletion.
+- Soft-deleted pages are hidden by default in `pages.list`.
+- Use `includeDeleted:true` to audit deleted pages.
+
+Recommended patterns:
+- Create page:
+```json
+{"cmd":"page.create","args":{"name":"Landing","apply":true}}
+```
+- Rename page:
+```json
+{"cmd":"page.update","args":{"nameOrId":"Landing","key":"name","value":"LandingV2","apply":true}}
+```
+- Soft-delete page:
+```json
+{"cmd":"page.delete","args":{"nameOrId":"LandingV2","apply":true}}
+```

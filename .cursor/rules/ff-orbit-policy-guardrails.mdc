@@ -1,0 +1,20 @@
+---
+description: Orbit policy gates, allow/deny prefixes, and blocked-write handling.
+alwaysApply: true
+---
+
+# Policy Guardrails
+
+Writes are gated by policy.
+Common blockers:
+- File key not in `allowFileKeyPrefixes`
+- Matches `denyFileKeyPrefixes`
+- `requireManualApproval`
+- max file/line thresholds
+
+Best practice:
+- Read policy via `orbit_policy_get` when writes are blocked.
+- Return exact blocked file key(s) and policy reason.
+- Do not report success if apply was policy-blocked.
+
+Policy updates may be disabled unless `ORBIT_ALLOW_POLICY_WRITE=1`.

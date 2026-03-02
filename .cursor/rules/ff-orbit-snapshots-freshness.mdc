@@ -1,0 +1,21 @@
+---
+description: Snapshot selection, freshness checks, and stale/partial data handling.
+alwaysApply: true
+---
+
+# Snapshot & Freshness
+
+Default behavior:
+- Use active/latest snapshot unless user pins one.
+- `pages.list` may auto-fallback to a fuller same-project snapshot when requested snapshot is incomplete.
+
+Controls:
+- `strictSnapshot:true` disables cross-snapshot fallback.
+- `includeDeleted:true` includes soft-deleted pages.
+
+When data looks wrong:
+1) Run `pages.list` without strict mode.
+2) Check warnings for stale/incomplete snapshot hints.
+3) Run `snapshots.refresh` and retry.
+
+Do not conclude deletions from partial refreshes or 429-heavy runs.

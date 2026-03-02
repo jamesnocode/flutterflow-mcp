@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+
+Use FF Orbit MCP first-class commands before low-level patching.
+
+Preferred flow for any write request:
+1) Resolve scope with `pages.list`, `page.get`, `widgets.list`, or `widget.get`.
+2) Make targeted change with first-class commands (`page.*`, `widget.*`).
+3) Keep changes in one changeset when related.
+4) Preview/validate/apply, and surface warnings/reasons clearly.
+
+Do not assume page/widget IDs from names unless resolved first.
+Do not claim a write was applied unless `applyResult.applied === true`.

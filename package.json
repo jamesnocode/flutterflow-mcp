@@ -1,0 +1,42 @@
+{
+  "name": "flutterflow-mcp",
+  "version": "0.1.0",
+  "description": "Orbit command-palette MCP server for FlutterFlow projects",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "tsx src/main.ts",
+    "start:prod": "node dist/main.js"
+  },
+  "keywords": [
+    "mcp",
+    "flutterflow",
+    "sqlite",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "better-sqlite3": "^12.6.2",
+    "diff": "^8.0.3",
+    "fast-json-patch": "^3.1.1",
+    "fflate": "^0.8.2",
+    "minimatch": "^10.2.2",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/diff": "^7.0.2",
+    "@types/node": "^25.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

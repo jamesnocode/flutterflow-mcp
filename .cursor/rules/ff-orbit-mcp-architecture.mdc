@@ -1,0 +1,24 @@
+---
+description: FF Orbit MCP architecture, command palette, and source-of-truth model.
+alwaysApply: true
+---
+
+# FF Orbit MCP Architecture
+
+Orbit is snapshot-first.
+- Snapshot: local point-in-time project files.
+- Index: symbols/edges extracted from snapshot.
+- Changeset: draft edits + preview + validation + apply.
+
+Core tool signature:
+```ts
+orbit({ cmd: string, args?: object, snapshot?: string, format?: "json"|"explain" })
+```
+
+Primary command groups:
+- Discovery: `projects.list`, `snapshots.create`, `snapshots.refresh`, `snapshots.info`, `snapshots.ls`
+- Query: `pages.list`, `page.get`, `widgets.list`, `widget.get`, `search`, `summarize.*`
+- Edit: `page.create`, `page.update`, `page.delete`, `widget.create`, `widget.set`, `widget.delete`
+- Safety: `changeset.preview`, `changeset.validate`, `changeset.apply`, `changeset.drop`
+
+Prefer deterministic commands over exploratory probing.

@@ -1,0 +1,19 @@
+---
+description: Short natural-language request patterns mapped to deterministic Orbit commands.
+alwaysApply: true
+---
+
+# Short Prompt Mapping
+
+Map user intent to first-class commands directly.
+
+Examples:
+- "List pages" -> `pages.list`
+- "Show widgets on login" -> `widgets.list {nameOrId:"login"}`
+- "Get this widget" -> `widget.get {nameOrId:<page>, nodeId:<id>}`
+- "Change brand.ai to James NoCode on login" -> locate text node then `widget.set`
+- "Create a button under this container" -> `widget.create`
+- "Remove widget id-Button_x on onboarding" -> `widget.delete`
+- "Rename Onboarding to Intro" -> `page.update`
+
+Always return resolved IDs and fileKeys in response summaries.

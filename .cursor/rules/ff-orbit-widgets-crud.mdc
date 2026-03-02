@@ -1,0 +1,25 @@
+---
+description: First-class widget CRUD for split-node and non-split page structures.
+alwaysApply: true
+---
+
+# Widgets CRUD
+
+Commands:
+- Create: `widget.create`
+- Read: `widgets.list`, `widget.get`
+- Update: `widget.set`
+- Delete: `widget.delete`
+
+Required args:
+- Page selector: `nameOrId` or `pageId` or `fileKey`
+- Widget selector: `nodeId`
+- For create: `parentNodeId`, `type`
+
+Safety:
+- In non-split pages, selectors must be scoped to the requested `nodeId` before key operations.
+- Never apply suffix-matched selectors at page root without node scoping.
+
+Text updates:
+- Prefer `props.text.textValue.inputValue`.
+- Mirror `props.text.textValue.mostRecentInputValue` when present.
