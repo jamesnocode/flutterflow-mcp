@@ -25,6 +25,6 @@ Prefer deterministic commands over exploratory probing.
 
 Current reliability features:
 - `snapshots.refresh` supports `fetchStrategy: auto|bulk|file`.
-- `snapshots.refresh` supports chunked full file mode (`chunkedFull`) to avoid relisting each pass.
+- `snapshots.refresh` defaults to chunked full file mode for `mode:"full", fetchStrategy:"file"` to avoid relisting each pass.
 - `changeset.applySafe` supports bounded 429 retry controls.
 - `intent.run` can map natural refresh prompts to `snapshots.refresh`.

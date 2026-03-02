@@ -17,7 +17,7 @@ Examples:
 - "Remove widget id-Button_x on onboarding" -> `widget.delete`
 - "Rename Onboarding to Intro" -> `page.update`
 - "Refresh snapshot from FlutterFlow" -> `snapshots.refresh {mode:"incremental", fetchStrategy:"auto"}`
-- "Refresh full snapshot in chunks" -> `snapshots.refresh {mode:"full", fetchStrategy:"file", chunkedFull:true, maxFetch:5}`
+- "Refresh full snapshot in chunks" -> `snapshots.refresh {mode:"full", fetchStrategy:"file", maxFetch:5}`
 - "Try safe apply under rate limits" -> `changeset.applySafe {changesetId:"...", confirm:true}`
 
 Always return resolved IDs and fileKeys in response summaries.

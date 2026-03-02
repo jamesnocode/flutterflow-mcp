@@ -178,7 +178,7 @@ describe("orbit snapshots.refresh safety", () => {
     db.close();
   });
 
-  it("supports chunked full refresh without relisting every pass", async () => {
+  it("defaults full file refresh to chunked session mode without relisting every pass", async () => {
     const remoteFiles: Record<string, string> = {
       "page/id-Scaffold_1.yaml": "pageName: One\n",
       "page/id-Scaffold_2.yaml": "pageName: Two\n",
@@ -221,7 +221,7 @@ describe("orbit snapshots.refresh safety", () => {
     const first = await orbit.run({
       cmd: "snapshots.refresh",
       snapshot: snapshot.snapshotId,
-      args: { mode: "full", fetchStrategy: "file", chunkedFull: true, maxFetch: 1, concurrency: 1, sleepMs: 0 }
+      args: { mode: "full", fetchStrategy: "file", maxFetch: 1, concurrency: 1, sleepMs: 0 }
     });
     expect(first.ok).toBe(true);
     const firstData = first.data as {
@@ -316,7 +316,7 @@ describe("orbit snapshots.refresh safety", () => {
     const first = await orbit.run({
       cmd: "snapshots.refresh",
       snapshot: snapshot.snapshotId,
-      args: { mode: "full", fetchStrategy: "file", chunkedFull: true, maxFetch: 1, concurrency: 1, sleepMs: 0 }
+      args: { mode: "full", fetchStrategy: "file", maxFetch: 1, concurrency: 1, sleepMs: 0 }
     });
     expect(first.ok).toBe(true);
     expect(listCalls).toBe(1);

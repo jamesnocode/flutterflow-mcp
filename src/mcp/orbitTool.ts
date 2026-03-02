@@ -1809,7 +1809,8 @@ export class OrbitCommandPalette {
                     sleepMs: "optional delay between file fetches in each worker, default 250ms",
                     listRetries: "optional retries for listPartitionedFileNames on 429 (0..6, default 2)",
                     listRetryBaseMs: "optional base backoff for list retries, default 1500",
-                    chunkedFull: "optional boolean; with mode=full+fetchStrategy=file, reuse a single list call across chunked runs",
+                    chunkedFull:
+                      "optional boolean; default true when mode=full+fetchStrategy=file (set false to force one-shot relist behavior)",
                     chunkSessionId: "optional session id to resume a chunked full refresh",
                     resetChunkSession: "optional boolean; reset existing chunk session before run"
                   },
@@ -1817,7 +1818,7 @@ export class OrbitCommandPalette {
                     { cmd: "snapshots.refresh", args: { mode: "incremental", maxFetch: 25, concurrency: 1, sleepMs: 250 } },
                     {
                       cmd: "snapshots.refresh",
-                      args: { mode: "full", fetchStrategy: "file", chunkedFull: true, maxFetch: 10, concurrency: 1, sleepMs: 1000 }
+                      args: { mode: "full", fetchStrategy: "file", maxFetch: 10, concurrency: 1, sleepMs: 1000 }
                     }
                   ]
                 },
@@ -2097,7 +2098,12 @@ export class OrbitCommandPalette {
           const modeRaw = strArg(args, "mode", false) || "incremental";
           const mode = modeRaw === "full" ? "full" : "incremental";
           const fetchStrategy = parseFetchStrategy(args);
-          const chunkedFull = boolArg(args, "chunkedFull", false) || boolArg(args, "chunked", false);
+          const chunkedFlagProvided =
+            Object.prototype.hasOwnProperty.call(args, "chunkedFull") ||
+            Object.prototype.hasOwnProperty.call(args, "chunked");
+          const chunkedFull = chunkedFlagProvided
+            ? boolArg(args, "chunkedFull", false) || boolArg(args, "chunked", false)
+            : mode === "full" && fetchStrategy === "file";
           const chunkSessionId = strArg(args, "chunkSessionId", false) || strArg(args, "sessionId", false);
           const resetChunkSession = boolArg(args, "resetChunkSession", false) || boolArg(args, "resetSession", false);
           const maxFetchRaw = numArg(args, "maxFetch", 0);

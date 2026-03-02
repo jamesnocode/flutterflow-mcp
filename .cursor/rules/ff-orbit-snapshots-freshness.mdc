@@ -13,7 +13,7 @@ Controls:
 - `strictSnapshot:true` disables cross-snapshot fallback.
 - `includeDeleted:true` includes soft-deleted pages.
 - `snapshots.refresh` supports `fetchStrategy: auto|bulk|file`.
-- `snapshots.refresh` supports chunked full file mode via `chunkedFull:true` (reuses one list call across chunk passes).
+- `snapshots.refresh` uses chunked full file mode by default for `mode:"full", fetchStrategy:"file"` (reuses one list call across chunk passes).
 
 When data looks wrong or stale:
 1) Run `snapshots.info` and inspect `refreshedAt` and counts.
@@ -25,7 +25,7 @@ Recommended refresh defaults under throttling:
 - Incremental: `mode:"incremental", fetchStrategy:"auto", maxFetch:25, concurrency:1, sleepMs:250`
 - Severe 429: `mode:"incremental", fetchStrategy:"file", maxFetch:5, concurrency:1, sleepMs:1000`
 - Full sync attempt: `mode:"full", fetchStrategy:"bulk"`
-- Chunked full fallback: `mode:"full", fetchStrategy:"file", chunkedFull:true, maxFetch:5`
+- Chunked full fallback: `mode:"full", fetchStrategy:"file", maxFetch:5`
 
 Authoritative state:
 - Treat snapshot as authoritative only when full refresh reports `authoritative:true` and `pruneApplied:true`.
